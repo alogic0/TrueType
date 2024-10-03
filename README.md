@@ -10,6 +10,8 @@ Contributions welcome.
 ## Synopsis
 
 ```zig
+const TrueType = @import("TrueType.zig");
+const ttf = try TrueType.load(@embedFile("GoNotoCurrent-Regular.ttf"));
 const example_string = "こんにちは!";
 const scale = ttf.scaleForPixelHeight(20);
 const stdout = std.io.getStdOut().writer();
@@ -48,6 +50,7 @@ the ones shipped alongside a game.
 
 * fix the glitch
 * kerning
+* `const debug_todo = false;`
 * support more advanced text shaping like harfbuzz
 * support the use case of loading untrusted font files
 

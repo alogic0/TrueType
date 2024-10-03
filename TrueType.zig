@@ -6,6 +6,7 @@ const readInt = std.mem.readInt;
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 const ArrayList = std.ArrayListUnmanaged;
+const log = std.log.scoped(.TrueType);
 
 const TrueType = @This();
 const debug_todo = true;
@@ -18,7 +19,7 @@ glyphs_len: u32,
 
 pub const GlyphIndex = enum(u32) { _ };
 
-const TableId = enum {
+pub const TableId = enum {
     cmap,
     loca,
     head,
@@ -64,6 +65,7 @@ pub fn load(bytes: []const u8) !TrueType {
             TableId.hmtx.asInt() => .hmtx,
             TableId.kern.asInt() => .kern,
             TableId.GPOS.asInt() => .GPOS,
+            TableId.maxp.asInt() => .maxp,
             else => continue,
         };
         table_offsets[@intFromEnum(id)] = readInt(u32, bytes[loc + 8 ..][0..4], .big);
@@ -71,7 +73,7 @@ pub fn load(bytes: []const u8) !TrueType {
 
     for (table_offsets, 0..) |elem, i| {
         const id: TableId = @enumFromInt(i);
-        std.log.debug("{s}: {d}", .{ @tagName(id), elem });
+        log.debug("{s}: {d}", .{ @tagName(id), elem });
     }
 
     if (table_offsets[@intFromEnum(TableId.cmap)] == 0) return error.MissingRequiredTable;
@@ -82,12 +84,12 @@ pub fn load(bytes: []const u8) !TrueType {
     if (table_offsets[@intFromEnum(TableId.hmtx)] == 0) return error.MissingRequiredTable;
 
     const maxp = table_offsets[@intFromEnum(TableId.maxp)];
-    const glyphs_len = if (maxp == 0) 0xffff else readInt(u32, bytes[maxp + 4 ..][0..4], .big);
-    std.log.debug("glyphs_len={d}", .{glyphs_len});
+    const glyphs_len = if (maxp == 0) 0xffff else readInt(u16, bytes[maxp + 4 ..][0..2], .big);
+    log.debug("glyphs_len={d}", .{glyphs_len});
 
     const cmap = table_offsets[@intFromEnum(TableId.cmap)];
     const cmap_tables_len = readInt(u16, bytes[cmap + 2 ..][0..2], .big);
-    std.log.debug("cmap_tables_len={d}", .{cmap_tables_len});
+    log.debug("cmap_tables_len={d}", .{cmap_tables_len});
     const index_map = for (0..cmap_tables_len) |i| {
         const encoding_record = cmap + 4 + 8 * i;
         const platform_id = readInt(u16, bytes[encoding_record..][0..2], .big);
@@ -102,11 +104,11 @@ pub fn load(bytes: []const u8) !TrueType {
             else => continue,
         }
     } else return error.IndexMapMissing;
-    std.log.debug("index_map={d}", .{index_map});
+    log.debug("index_map={d}", .{index_map});
 
     const head = table_offsets[@intFromEnum(TableId.head)];
     const index_to_loc_format = readInt(u16, bytes[head + 50 ..][0..2], .big);
-    std.log.debug("index_to_loc_format={d}", .{index_to_loc_format});
+    log.debug("index_to_loc_format={d}", .{index_to_loc_format});
 
     return .{
         .table_offsets = table_offsets,
@@ -190,14 +192,15 @@ pub fn codepointGlyphIndex(tt: *const TrueType, codepoint: u21) ?GlyphIndex {
             // Binary search the right group.
             while (low < high) {
                 const mid = low + ((high - low) >> 1); // rounds down, so low <= mid < high
-                const start_char = readInt(u32, bytes[index_map + 16 + mid * 12 ..][0..4], .big);
-                const end_char = readInt(u32, bytes[index_map + 16 + mid * 12 + 4 ..][0..4], .big);
+                const off = index_map + 16 + mid * 12;
+                const start_char = readInt(u32, bytes[off..][0..4], .big);
+                const end_char = readInt(u32, bytes[off + 4 ..][0..4], .big);
                 if (codepoint < start_char) {
                     high = mid;
                 } else if (codepoint > end_char) {
                     low = mid + 1;
                 } else {
-                    const start_glyph = readInt(u32, bytes[index_map + 16 + mid * 12 + 8 ..][0..4], .big);
+                    const start_glyph = readInt(u32, bytes[off + 8 ..][0..4], .big);
                     return @enumFromInt(start_glyph + if (format == 12) codepoint - start_char else 0);
                 }
             }
