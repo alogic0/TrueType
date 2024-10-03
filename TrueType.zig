@@ -90,20 +90,29 @@ pub fn load(bytes: []const u8) !TrueType {
     const cmap = table_offsets[@intFromEnum(TableId.cmap)];
     const cmap_tables_len = readInt(u16, bytes[cmap + 2 ..][0..2], .big);
     log.debug("cmap_tables_len={d}", .{cmap_tables_len});
-    const index_map = for (0..cmap_tables_len) |i| {
-        const encoding_record = cmap + 4 + 8 * i;
-        const platform_id = readInt(u16, bytes[encoding_record..][0..2], .big);
-        switch (platform_id) {
-            @intFromEnum(PlatformId.microsoft) => switch (readInt(u16, bytes[encoding_record + 2 ..][0..2], .big)) {
-                @intFromEnum(MicrosoftEncodingId.unicode_bmp),
-                @intFromEnum(MicrosoftEncodingId.unicode_full),
-                => break cmap + readInt(u32, bytes[encoding_record + 4 ..][0..4], .big),
+    const index_map = im: {
+        var i = cmap_tables_len;
+        while (true) {
+            i -= 1;
+            if (i == 0) return error.IndexMapMissing;
+            const encoding_record = cmap + 4 + 8 * i;
+            const platform_id = readInt(u16, bytes[encoding_record..][0..2], .big);
+            switch (platform_id) {
+                @intFromEnum(PlatformId.microsoft) => switch (readInt(u16, bytes[encoding_record + 2 ..][0..2], .big)) {
+                    @intFromEnum(MicrosoftEncodingId.unicode_bmp),
+                    @intFromEnum(MicrosoftEncodingId.unicode_full),
+                    => {
+                        break :im cmap + readInt(u32, bytes[encoding_record + 4 ..][0..4], .big);
+                    },
+                    else => continue,
+                },
+                @intFromEnum(PlatformId.unicode) => {
+                    break :im cmap + readInt(u32, bytes[encoding_record + 4 ..][0..4], .big);
+                },
                 else => continue,
-            },
-            @intFromEnum(PlatformId.unicode) => break cmap + readInt(u32, bytes[encoding_record + 4 ..][0..4], .big),
-            else => continue,
+            }
         }
-    } else return error.IndexMapMissing;
+    };
     log.debug("index_map={d}", .{index_map});
 
     const head = table_offsets[@intFromEnum(TableId.head)];
