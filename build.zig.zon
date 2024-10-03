@@ -1,0 +1,13 @@
+.{
+    .name = "TrueType",
+    .version = "0.0.0",
+    .minimum_zig_version = "0.13.0",
+    .dependencies = .{},
+    .paths = .{
+        "LICENSE",
+        "README.md",
+        "TrueType.zig",
+        "build.zig",
+        "build.zig.zon",
+    },
+}
