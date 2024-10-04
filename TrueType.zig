@@ -341,6 +341,144 @@ pub fn glyphHMetrics(tt: *const TrueType, glyph: GlyphIndex) HMetrics {
     };
 }
 
+/// An additional amount to advance the horizontal coordinate between the two
+/// provided glyphs.
+pub fn glyphKernAdvance(tt: *const TrueType, a: GlyphIndex, b: GlyphIndex) i16 {
+    const gpos = tt.table_offsets[@intFromEnum(TableId.GPOS)];
+    if (gpos > 0) return glyphKernAdvanceGpos(tt, a, b);
+    const kern = tt.table_offsets[@intFromEnum(TableId.kern)];
+    if (kern > 0) return glyphKernAdvanceKern(tt, a, b);
+    return 0;
+}
+
+fn glyphKernAdvanceGpos(tt: *const TrueType, a: GlyphIndex, b: GlyphIndex) i16 {
+    const bytes = tt.ttf_bytes;
+    const gpos = tt.table_offsets[@intFromEnum(TableId.GPOS)];
+    assert(gpos > 0);
+
+    if (readInt(u16, bytes[gpos + 0 ..][0..2], .big) != 1) return 0; // Major version 1
+    if (readInt(u16, bytes[gpos + 2 ..][0..2], .big) != 0) return 0; // Minor version 0
+
+    const lookup_list_offset: u16 = readInt(u16, bytes[gpos + 8 ..][0..2], .big);
+    const lookup_list = gpos + lookup_list_offset;
+    const lookup_count: u16 = readInt(u16, bytes[lookup_list..][0..2], .big);
+
+    for (0..lookup_count) |i| {
+        const lookup_offset = readInt(u16, bytes[lookup_list + 2 + 2 * i ..][0..2], .big);
+        const lookup_table = lookup_list + lookup_offset;
+
+        const lookup_type = readInt(u16, bytes[lookup_table..][0..2], .big);
+        const sub_table_count = readInt(u16, bytes[lookup_table + 4 ..][0..2], .big);
+        const sub_table_offsets = lookup_table + 6;
+        if (lookup_type != 2) // Pair Adjustment Positioning Subtable
+            continue;
+
+        for (0..sub_table_count) |sti| {
+            const subtable_offset = readInt(u16, bytes[sub_table_offsets + 2 * sti ..][0..2], .big);
+            const table = lookup_table + subtable_offset;
+            const pos_format = readInt(u16, bytes[table..][0..2], .big);
+            const coverage_offset = readInt(u16, bytes[table + 2 ..][0..2], .big);
+            const coverage_index = coverageIndex(bytes, table + coverage_offset, a) orelse continue;
+
+            switch (pos_format) {
+                1 => {
+                    const value_format_1 = readInt(u16, bytes[table + 4 ..][0..2], .big);
+                    const value_format_2 = readInt(u16, bytes[table + 6 ..][0..2], .big);
+                    if (value_format_1 == 4 and value_format_2 == 0) {
+                        const value_record_pair_size_in_bytes = 2;
+                        const pair_set_count = readInt(u16, bytes[table + 8 ..][0..2], .big);
+                        const pair_pos_offset = readInt(u16, bytes[table + 10 + 2 * coverage_index ..][0..2], .big);
+                        const pair_value_table = table + pair_pos_offset;
+                        const pair_value_count = readInt(u16, bytes[pair_value_table..][0..2], .big);
+                        const pair_value_array = pair_value_table + 2;
+
+                        if (coverage_index >= pair_set_count) return 0;
+
+                        const needle = @intFromEnum(b);
+                        var r: u32 = pair_value_count - 1;
+                        var l: u32 = 0;
+
+                        // Binary search.
+                        while (l <= r) {
+                            const m = (l + r) >> 1;
+                            const pair_value = pair_value_array + (2 + value_record_pair_size_in_bytes) * m;
+                            const second_glyph = readInt(u16, bytes[pair_value..][0..2], .big);
+                            const straw = second_glyph;
+                            if (needle < straw) {
+                                if (m == 0) break;
+                                r = m - 1;
+                            } else if (needle > straw) {
+                                l = m + 1;
+                            } else {
+                                return readInt(i16, bytes[pair_value + 2 ..][0..2], .big);
+                            }
+                        }
+                    } else {
+                        if (debug_todo) @panic("TODO implement more glyphKernAdvanceGpos");
+                        return 0;
+                    }
+                },
+                2 => {
+                    const value_format_1 = readInt(u16, bytes[table + 4 ..][0..2], .big);
+                    const value_format_2 = readInt(u16, bytes[table + 6 ..][0..2], .big);
+                    if (value_format_1 == 4 and value_format_2 == 0) {
+                        const class_def10_offset = readInt(u16, bytes[table + 8 ..][0..2], .big);
+                        const class_def20_offset = readInt(u16, bytes[table + 10 ..][0..2], .big);
+                        const glyph1class = glyphClass(bytes, table + class_def10_offset, a);
+                        const glyph2class = glyphClass(bytes, table + class_def20_offset, b);
+
+                        const class1_count = readInt(u16, bytes[table + 12 ..][0..2], .big);
+                        const class2_count = readInt(u16, bytes[table + 14 ..][0..2], .big);
+
+                        if (glyph1class >= class1_count) return 0; // malformed
+                        if (glyph2class >= class2_count) return 0; // malformed
+
+                        const class1_records = table + 16;
+                        const class2_records = class1_records + 2 * (glyph1class * class2_count);
+                        return readInt(i16, bytes[class2_records + 2 * glyph2class ..][0..2], .big);
+                    } else {
+                        if (debug_todo) @panic("TODO implement more glyphKernAdvanceGpos");
+                        return 0;
+                    }
+                },
+                else => {
+                    if (debug_todo) @panic("TODO implement more glyphKernAdvanceGpos");
+                    return 0;
+                },
+            }
+        }
+    }
+
+    return 0;
+}
+
+fn glyphKernAdvanceKern(tt: *const TrueType, a: GlyphIndex, b: GlyphIndex) i16 {
+    const bytes = tt.ttf_bytes;
+    const kern = tt.table_offsets[@intFromEnum(TableId.kern)];
+    assert(kern > 0);
+    // we only look at the first table. it must be 'horizontal' and format 0.
+    if (readInt(u16, bytes[kern + 2 ..][0..2], .big) < 1) // number of tables, need at least 1
+        return 0;
+    if (readInt(u16, bytes[kern + 8 ..][0..2], .big) != 1) // horizontal flag must be set in format
+        return 0;
+
+    var l: u32 = 0;
+    var r: u32 = readInt(u16, bytes[kern + 10 ..][0..2], .big) - 1;
+    const needle: u32 = @intFromEnum(a) << 16 | @intFromEnum(b);
+    while (l <= r) {
+        const m: u32 = (l + r) >> 1;
+        const straw: u32 = readInt(u32, bytes[kern + 18 + (m * 6) ..][0..4], .big); // note: unaligned read
+        if (needle < straw) {
+            r = m - 1;
+        } else if (needle > straw) {
+            l = m + 1;
+        } else {
+            return readInt(i16, bytes[kern + 22 + (m * 6) ..][0..2], .big);
+        }
+    }
+    return 0;
+}
+
 const Vertex = struct {
     x: i16,
     y: i16,
@@ -1352,4 +1490,99 @@ fn handleClippedEdge(
         // coverage = 1 - average x position
         scanline[x] += e.direction * (y1 - y0) * (1 - ((x0 - xf) + (x1 - xf)) / 2);
     }
+}
+
+fn coverageIndex(bytes: []const u8, coverage_table: u32, glyph: GlyphIndex) ?u32 {
+    const coverage_format = readInt(u16, bytes[coverage_table..][0..2], .big);
+    switch (coverage_format) {
+        1 => {
+            const glyph_count = readInt(u16, bytes[coverage_table + 2 ..][0..2], .big);
+
+            // Binary search.
+            var l: u32 = 0;
+            var r: u32 = glyph_count - 1;
+            const needle = @intFromEnum(glyph);
+            while (l <= r) {
+                const glyph_array = coverage_table + 4;
+                const m = (l + r) >> 1;
+                const glyph_id = readInt(u16, bytes[glyph_array + 2 * m ..][0..2], .big);
+                const straw = glyph_id;
+                if (needle < straw) {
+                    if (m == 0) break;
+                    r = m - 1;
+                } else if (needle > straw) {
+                    l = m + 1;
+                } else {
+                    return m;
+                }
+            }
+        },
+        2 => {
+            const range_count = readInt(u16, bytes[coverage_table + 2 ..][0..2], .big);
+            const range_array = coverage_table + 4;
+
+            // Binary search.
+            var l: u32 = 0;
+            var r: u32 = range_count - 1;
+            const needle = @intFromEnum(glyph);
+            while (l <= r) {
+                const m = (l + r) >> 1;
+                const range_record = range_array + 6 * m;
+                const straw_start = readInt(u16, bytes[range_record..][0..2], .big);
+                const straw_end = readInt(u16, bytes[range_record + 2 ..][0..2], .big);
+                if (needle < straw_start) {
+                    if (m == 0) break;
+                    r = m - 1;
+                } else if (needle > straw_end) {
+                    l = m + 1;
+                } else {
+                    const start_coverage_index = readInt(u16, bytes[range_record + 4 ..][0..2], .big);
+                    return start_coverage_index + needle - straw_start;
+                }
+            }
+        },
+        else => {},
+    }
+    return null;
+}
+
+fn glyphClass(bytes: []const u8, class_def_table: u32, glyph: GlyphIndex) u32 {
+    const glyph_int = @intFromEnum(glyph);
+    const class_def_format = readInt(u16, bytes[class_def_table..][0..2], .big);
+    switch (class_def_format) {
+        1 => {
+            const start_glyph_id = readInt(u16, bytes[class_def_table + 2 ..][0..2], .big);
+            const glyph_count = readInt(u16, bytes[class_def_table + 4 ..][0..2], .big);
+            const class_def1_value_array = class_def_table + 6;
+
+            if (glyph_int >= start_glyph_id and glyph_int < start_glyph_id + glyph_count)
+                return readInt(u16, bytes[class_def1_value_array + 2 * (glyph_int - start_glyph_id) ..][0..2], .big);
+        },
+        2 => {
+            const class_range_count = readInt(u16, bytes[class_def_table + 2 ..][0..2], .big);
+            const class_range_records = class_def_table + 4;
+
+            // Binary search.
+            var l: u32 = 0;
+            var r: u32 = class_range_count - 1;
+            while (l <= r) {
+                const m = (l + r) >> 1;
+                const class_range_record = class_range_records + 6 * m;
+                const straw_start = readInt(u16, bytes[class_range_record..][0..2], .big);
+                const straw_end = readInt(u16, bytes[class_range_record + 2 ..][0..2], .big);
+                if (glyph_int < straw_start) {
+                    if (m == 0) break;
+                    r = m - 1;
+                } else if (glyph_int > straw_end) {
+                    l = m + 1;
+                } else {
+                    return readInt(u16, bytes[class_range_record + 4 ..][0..2], .big);
+                }
+            }
+        },
+        else => return std.math.maxInt(u32), // Unsupported definition type, return an error.
+    }
+
+    // "All glyphs not assigned to a class fall into class 0". (OpenType spec)
+    return 0;
 }

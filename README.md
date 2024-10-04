@@ -36,22 +36,19 @@ while (it.nextCodepoint()) |codepoint| {
 }
 ```
 
-## Status
+## Features and Limitations
 
-The basic API of glyph lookup and rendering works.
-
-Kerning is not yet ported.
-
-The only supported use case right now is loading trusted font files, such as
-the ones shipped alongside a game.
+* Codepoint to glyph lookup
+* Glyph rendering to bitmap
+* Kerning
+* Font shaping and ligatures are not yet implemented.
+* Untrusted font files are not supported.
 
 ## Roadmap
 
-* kerning
-* `const debug_todo = false;`
+* eliminate TODOs
 * eliminate heap allocation
 * support more advanced text shaping like harfbuzz
-* support the use case of loading untrusted font files
 
 ## Why not use FreeType?
 
