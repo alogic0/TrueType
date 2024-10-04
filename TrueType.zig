@@ -316,6 +316,31 @@ pub fn scaleForPixelHeight(tt: *const TrueType, height: f32) f32 {
     return height / fheight;
 }
 
+pub const HMetrics = struct {
+    /// The offset from the current horizontal position to the next horizontal
+    /// position in unscaled coordinates.
+    advance_width: i16,
+    /// The offset from the current horizontal position to the left edge of the
+    /// character in unscaled coordinates.
+    left_side_bearing: i16,
+};
+
+pub fn glyphHMetrics(tt: *const TrueType, glyph: GlyphIndex) HMetrics {
+    const glyph_index = @intFromEnum(glyph);
+    const bytes = tt.ttf_bytes;
+    const hhea = tt.table_offsets[@intFromEnum(TableId.hhea)];
+    const hmtx = tt.table_offsets[@intFromEnum(TableId.hmtx)];
+    const n_long_h_metrics = readInt(u16, bytes[hhea + 34 ..][0..2], .big);
+    if (glyph_index < n_long_h_metrics) return .{
+        .advance_width = readInt(i16, bytes[hmtx + 4 * glyph_index ..][0..2], .big),
+        .left_side_bearing = readInt(i16, bytes[hmtx + 4 * glyph_index + 2 ..][0..2], .big),
+    };
+    return .{
+        .advance_width = readInt(i16, bytes[hmtx + 4 * (n_long_h_metrics - 1) ..][0..2], .big),
+        .left_side_bearing = readInt(i16, bytes[hmtx + 4 * n_long_h_metrics + 2 * (glyph_index - n_long_h_metrics) ..][0..2], .big),
+    };
+}
+
 const Vertex = struct {
     x: i16,
     y: i16,

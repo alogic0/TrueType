@@ -35,6 +35,25 @@ test "glyph index lookup" {
     }
 }
 
+test "glyph h metrics" {
+    const ttf = try TrueType.load(ttf_data);
+    var stb_font: c.stbtt_fontinfo = undefined;
+    try expect(c.stbtt_InitFont(&stb_font, ttf_data, 0) != 0);
+    try expectEqualInts(stb_font.numGlyphs, ttf.glyphs_len);
+
+    for (0..ttf.glyphs_len) |glyph_index| {
+        //std.debug.print("glyph_index={d}/{d}\n", .{ glyph_index, ttf.glyphs_len });
+        const zig_answer = ttf.glyphHMetrics(@enumFromInt(glyph_index));
+
+        var stb_advance_width: c_int = undefined;
+        var stb_left_side_bearing: c_int = undefined;
+        c.stbtt_GetGlyphHMetrics(&stb_font, @intCast(glyph_index), &stb_advance_width, &stb_left_side_bearing);
+
+        try expectEqual(stb_advance_width, zig_answer.advance_width);
+        try expectEqual(stb_left_side_bearing, zig_answer.left_side_bearing);
+    }
+}
+
 test "glyph bitmap rendering" {
     const gpa = std.testing.allocator;
 
