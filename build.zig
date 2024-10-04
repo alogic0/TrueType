@@ -34,6 +34,7 @@ pub fn build(b: *std.Build) void {
         .use_llvm = use_llvm,
         .use_lld = use_llvm,
     });
+    unit_tests.filters = b.option([]const []const u8, "test-filter", "string to match for unit tests") orelse &.{};
     unit_tests.root_module.addImport("TrueType", tt_mod);
     unit_tests.root_module.addImport("c", stb_truetype_bindings.createModule());
     unit_tests.addObject(stb_truetype_object);
