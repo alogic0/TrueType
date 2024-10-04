@@ -38,8 +38,7 @@ while (it.nextCodepoint()) |codepoint| {
 
 ## Status
 
-The basic API of glyph lookup and rendering works, but has a rendering glitch
-that I haven't figured out yet.
+The basic API of glyph lookup and rendering works.
 
 Kerning is not yet ported.
 
@@ -48,9 +47,9 @@ the ones shipped alongside a game.
 
 ## Roadmap
 
-* fix the glitch
 * kerning
 * `const debug_todo = false;`
+* eliminate heap allocation
 * support more advanced text shaping like harfbuzz
 * support the use case of loading untrusted font files
 

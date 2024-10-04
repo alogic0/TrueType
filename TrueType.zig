@@ -946,7 +946,7 @@ fn rasterizeSortedEdges(
     var e: u32 = 0;
     while (j < result.h) {
         // find center of pixel for this scanline
-        const scan_y_top: f32 = @floatFromInt(y + 0);
+        const scan_y_top: f32 = @floatFromInt(y);
         const scan_y_bottom: f32 = @floatFromInt(y + 1);
         var step: *?*ActiveEdge = &active;
 
@@ -988,7 +988,7 @@ fn rasterizeSortedEdges(
 
         {
             var sum: f32 = 0;
-            for (scanline, scanline2[1..], result.pixels[j * result.stride ..][0..result.w]) |s, s2, *p| {
+            for (scanline, scanline2[0..result.w], result.pixels[j * result.stride ..][0..result.w]) |s, s2, *p| {
                 sum += s2;
                 p.* = @intFromFloat(@min(@abs(s + sum) * 255 + 0.5, 255));
             }
