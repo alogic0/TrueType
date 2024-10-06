@@ -6,7 +6,6 @@ const readInt = std.mem.readInt;
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 const ArrayList = std.ArrayListUnmanaged;
-const log = std.log.scoped(.TrueType);
 
 const TrueType = @This();
 const debug_todo = true;
@@ -71,11 +70,6 @@ pub fn load(bytes: []const u8) !TrueType {
         table_offsets[@intFromEnum(id)] = readInt(u32, bytes[loc + 8 ..][0..4], .big);
     }
 
-    for (table_offsets, 0..) |elem, i| {
-        const id: TableId = @enumFromInt(i);
-        log.debug("{s}: {d}", .{ @tagName(id), elem });
-    }
-
     if (table_offsets[@intFromEnum(TableId.cmap)] == 0) return error.MissingRequiredTable;
     if (table_offsets[@intFromEnum(TableId.loca)] == 0) return error.MissingRequiredTable;
     if (table_offsets[@intFromEnum(TableId.head)] == 0) return error.MissingRequiredTable;
@@ -85,11 +79,9 @@ pub fn load(bytes: []const u8) !TrueType {
 
     const maxp = table_offsets[@intFromEnum(TableId.maxp)];
     const glyphs_len = if (maxp == 0) 0xffff else readInt(u16, bytes[maxp + 4 ..][0..2], .big);
-    log.debug("glyphs_len={d}", .{glyphs_len});
 
     const cmap = table_offsets[@intFromEnum(TableId.cmap)];
     const cmap_tables_len = readInt(u16, bytes[cmap + 2 ..][0..2], .big);
-    log.debug("cmap_tables_len={d}", .{cmap_tables_len});
     const index_map = im: {
         var i = cmap_tables_len;
         while (true) {
@@ -113,11 +105,9 @@ pub fn load(bytes: []const u8) !TrueType {
             }
         }
     };
-    log.debug("index_map={d}", .{index_map});
 
     const head = table_offsets[@intFromEnum(TableId.head)];
     const index_to_loc_format = readInt(u16, bytes[head + 50 ..][0..2], .big);
-    log.debug("index_to_loc_format={d}", .{index_to_loc_format});
 
     return .{
         .table_offsets = table_offsets,
