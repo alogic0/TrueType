@@ -60,13 +60,19 @@ test "glyph kern advance" {
     try expect(c.stbtt_InitFont(&stb_font, ttf_data, 0) != 0);
     try expectEqualInts(stb_font.numGlyphs, ttf.glyphs_len);
 
-    for (0..ttf.glyphs_len) |a| {
-        for (0..ttf.glyphs_len) |b| {
-            //if (b == 0) std.debug.print("glyph_index={d}/{d}\n", .{ a * ttf.glyphs_len + b, ttf.glyphs_len * ttf.glyphs_len });
-            const stb_answer = c.stbtt_GetGlyphKernAdvance(&stb_font, @intCast(a), @intCast(b));
-            const zig_answer = ttf.glyphKernAdvance(@enumFromInt(a), @enumFromInt(b));
-            try expectEqual(stb_answer, zig_answer);
-        }
+    // I tested this with every combination of pairs once and it fully passed,
+    // but that takes 2 days to run so let's just test a sample instead.
+
+    var rng_instance: std.Random.DefaultPrng = .init(std.testing.random_seed);
+    const rng = rng_instance.random();
+
+    for (0..500_000) |_| {
+        const a = rng.uintLessThan(u32, ttf.glyphs_len);
+        const b = rng.uintLessThan(u32, ttf.glyphs_len);
+        //if (b == 0) std.debug.print("glyph_index={d}/{d}\n", .{ a * ttf.glyphs_len + b, ttf.glyphs_len * ttf.glyphs_len });
+        const stb_answer = c.stbtt_GetGlyphKernAdvance(&stb_font, @intCast(a), @intCast(b));
+        const zig_answer = ttf.glyphKernAdvance(@enumFromInt(a), @enumFromInt(b));
+        try expectEqual(stb_answer, zig_answer);
     }
 }
 
