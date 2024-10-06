@@ -7,7 +7,6 @@ const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 const ArrayList = std.ArrayListUnmanaged;
 
-const otf = open_type;
 const TrueType = @This();
 const debug_todo = true;
 
@@ -16,18 +15,7 @@ ttf_bytes: []const u8,
 index_map: u32,
 index_to_loc_format: u16,
 glyphs_len: u32,
-/// cff font data
-cff: otf.Buf,
-/// the charstring index
-charstrings: otf.Buf,
-/// global charstring subroutines index
-gsubrs: otf.Buf,
-/// private charstring subroutines index
-subrs: otf.Buf,
-/// array of font dicts
-fontdicts: otf.Buf,
-/// map from glyph to fontdict
-fdselect: otf.Buf,
+cff_data: CffData,
 
 pub const GlyphIndex = enum(u32) { _ };
 
@@ -41,7 +29,6 @@ pub const TableId = enum {
     kern,
     GPOS,
     maxp,
-    @"CFF ",
 
     fn asInt(id: TableId) u32 {
         const array4: [4]u8 = @tagName(id).*;
@@ -67,6 +54,7 @@ pub fn load(bytes: []const u8) !TrueType {
     // Find tables.
     var table_offsets = [1]u32{0} ** @typeInfo(TableId).@"enum".fields.len;
     const tables_len = readInt(u16, bytes[4..][0..2], .big);
+    var cff: u32 = 0;
     for (0..tables_len) |i| {
         const loc = 12 + 16 * i;
         const id: TableId = switch (readInt(u32, bytes[loc..][0..4], native_endian)) {
@@ -79,7 +67,10 @@ pub fn load(bytes: []const u8) !TrueType {
             TableId.kern.asInt() => .kern,
             TableId.GPOS.asInt() => .GPOS,
             TableId.maxp.asInt() => .maxp,
-            TableId.@"CFF ".asInt() => .@"CFF ",
+            readInt(u32, "CFF ", native_endian) => {
+                cff = readInt(u32, bytes[loc + 8 ..][0..4], .big);
+                continue;
+            },
             else => continue,
         };
         table_offsets[@intFromEnum(id)] = readInt(u32, bytes[loc + 8 ..][0..4], .big);
@@ -90,56 +81,13 @@ pub fn load(bytes: []const u8) !TrueType {
     if (table_offsets[@intFromEnum(TableId.hhea)] == 0) return error.MissingRequiredTable;
     if (table_offsets[@intFromEnum(TableId.hmtx)] == 0) return error.MissingRequiredTable;
 
-    var cff: otf.Buf = .empty;
-    var charstrings: otf.Buf = .empty;
-    var gsubrs: otf.Buf = .empty;
-    var subrs: otf.Buf = .empty;
-    var fontdicts: otf.Buf = .empty;
-    var fdselect: otf.Buf = .empty;
+    var cff_data: CffData = .empty;
 
     if (table_offsets[@intFromEnum(TableId.glyf)] != 0) {
         if (table_offsets[@intFromEnum(TableId.loca)] == 0) return error.MissingRequiredTable;
     } else {
-        const cff_offset = table_offsets[@intFromEnum(TableId.@"CFF ")];
-        if (cff_offset == 0) return error.MissingRequiredTable;
-        // TODO this should use size from table (not 512MB)
-        cff = .init(bytes.ptr + cff_offset, 512 * 1024 * 1024);
-        var b = cff;
-        // read the header
-        b.skip(2);
-        b.seek(b.get8());
-        // TODO the name INDEX could list multiple fonts, but we just use the first one.
-        _ = b.cffGetIndex(); // name INDEX
-        var topdictidx = b.cffGetIndex();
-        var topdict = topdictidx.cffIndexGet(@enumFromInt(0));
-        _ = b.cffGetIndex(); // string INDEX
-        gsubrs = b.cffGetIndex();
-
-        var cstype: u32 = 2;
-        var csoff: u32 = 0;
-        var fdarrayoff: u32 = 0;
-        var fdselectoff: u32 = 0;
-
-        topdict.dictGetInts(17, 1, @ptrCast(&csoff));
-        topdict.dictGetInts(0x100 | 6, 1, @ptrCast(&cstype));
-        topdict.dictGetInts(0x100 | 36, 1, @ptrCast(&fdarrayoff));
-        topdict.dictGetInts(0x100 | 37, 1, @ptrCast(&fdselectoff));
-        subrs = b.getSubrs(topdict);
-
-        // we only support Type 2 charstrings
-        if (cstype != 2) return error.UnsupportedCffData;
-        if (csoff == 0) return error.UnsupportedCffData;
-
-        if (fdarrayoff != 0) {
-            // looks like a CID font
-            if (fdselectoff == 0) return error.UnsupportedCffData;
-            b.seek(fdarrayoff);
-            fontdicts = b.cffGetIndex();
-            fdselect = b.range(fdselectoff, b.size - fdselectoff);
-        }
-
-        b.seek(csoff);
-        charstrings = b.cffGetIndex();
+        if (cff == 0) return error.MissingRequiredTable;
+        cff_data = try .init(cff, bytes.ptr);
     }
 
     const maxp = table_offsets[@intFromEnum(TableId.maxp)];
@@ -180,12 +128,7 @@ pub fn load(bytes: []const u8) !TrueType {
         .index_map = index_map,
         .index_to_loc_format = index_to_loc_format,
         .glyphs_len = glyphs_len,
-        .cff = cff,
-        .charstrings = charstrings,
-        .gsubrs = gsubrs,
-        .subrs = subrs,
-        .fontdicts = fontdicts,
-        .fdselect = fdselect,
+        .cff_data = cff_data,
     };
 }
 
@@ -589,8 +532,8 @@ pub const Vertex = struct {
 };
 
 fn glyphShape(tt: *const TrueType, gpa: Allocator, glyph: GlyphIndex) GlyphBitmapError![]Vertex {
-    return if (tt.table_offsets[@intFromEnum(TableId.@"CFF ")] != 0)
-        open_type.glyphShape(tt, gpa, glyph)
+    return if (tt.cff_data.cff.size != 0)
+        tt.glyphShapeT2(gpa, glyph)
     else
         tt.glyphShapeTT(gpa, glyph);
 }
@@ -862,8 +805,8 @@ fn glyphBitmapBoxSubpixel(
 }
 
 fn glyphBox(tt: *const TrueType, glyph: GlyphIndex) error{GlyphNotFound}!BitmapBox {
-    return if (tt.table_offsets[@intFromEnum(TableId.@"CFF ")] != 0)
-        open_type.glyphBox(tt, glyph)
+    return if (tt.cff_data.cff.size != 0)
+        tt.glyphBoxT2(glyph)
     else
         tt.glyphBoxTT(glyph);
 }
@@ -1684,17 +1627,77 @@ fn glyphClass(bytes: []const u8, class_def_table: u32, glyph: GlyphIndex) u32 {
     return 0;
 }
 
-fn setVertex(vert: *Vertex, ty: Vertex.Type, x: i32, y: i32, cx: i32, cy: i32) void {
-    // std.log.debug("xy {},{} cxy {},{}", .{ x, y, cx, cy });
-    vert.type = ty;
-    vert.x = @truncate(x);
-    vert.y = @truncate(y);
-    vert.cx = @truncate(cx);
-    vert.cy = @truncate(cy);
-}
-
-/// a container for opentype specific code.
+// ---
+// opentype specific code
+// ---
 const open_type = struct {
+    const CffData = struct {
+        /// cff font data
+        cff: Buf,
+        /// the charstring index
+        charstrings: Buf,
+        /// global charstring subroutines index
+        gsubrs: Buf,
+        /// private charstring subroutines index
+        subrs: Buf,
+        /// array of font dicts
+        fontdicts: Buf,
+        /// map from glyph to fontdict
+        fdselect: Buf,
+
+        pub const empty: CffData = .{
+            .cff = .empty,
+            .charstrings = .empty,
+            .gsubrs = .empty,
+            .subrs = .empty,
+            .fontdicts = .empty,
+            .fdselect = .empty,
+        };
+
+        pub fn init(cff_offset: u32, bytes: [*]const u8) !CffData {
+            var result: CffData = .empty;
+            // TODO this should use size from table (not 512MB)
+            result.cff = .init(bytes + cff_offset, 512 * 1024 * 1024);
+            var b = result.cff;
+            // read the header
+            b.skip(2);
+            b.seek(b.get8());
+            // TODO the name INDEX could list multiple fonts, but we just use the first one.
+            _ = b.cffGetIndex(); // name INDEX
+            var topdictidx = b.cffGetIndex();
+            var topdict = topdictidx.cffIndexGet(@enumFromInt(0));
+            _ = b.cffGetIndex(); // string INDEX
+            result.gsubrs = b.cffGetIndex();
+
+            var cstype: u32 = 2;
+            var csoff: u32 = 0;
+            var fdarrayoff: u32 = 0;
+            var fdselectoff: u32 = 0;
+
+            topdict.dictGetInts(17, 1, @ptrCast(&csoff));
+            topdict.dictGetInts(0x100 | 6, 1, @ptrCast(&cstype));
+            topdict.dictGetInts(0x100 | 36, 1, @ptrCast(&fdarrayoff));
+            topdict.dictGetInts(0x100 | 37, 1, @ptrCast(&fdselectoff));
+            result.subrs = b.getSubrs(topdict);
+
+            // we only support Type 2 charstrings
+            if (cstype != 2) return error.UnsupportedCffData;
+            if (csoff == 0) return error.UnsupportedCffData;
+
+            if (fdarrayoff != 0) {
+                // looks like a CID font
+                if (fdselectoff == 0) return error.UnsupportedCffData;
+                b.seek(fdarrayoff);
+                result.fontdicts = b.cffGetIndex();
+                result.fdselect = b.range(fdselectoff, b.size - fdselectoff);
+            }
+
+            b.seek(csoff);
+            result.charstrings = b.cffGetIndex();
+            return result;
+        }
+    };
+
     const Buf = struct {
         data: [*]const u8,
         cursor: u32,
@@ -1927,7 +1930,7 @@ const open_type = struct {
                     trackVertex(ctx, cx1, cy1);
                 }
             } else {
-                setVertex(&ctx.vertices[ctx.num_vertices], ty, x, y, cx, cy);
+                ctx.vertices[ctx.num_vertices].set(ty, x, y, cx, cy);
                 ctx.vertices[ctx.num_vertices].cx1 = @truncate(cx1);
                 ctx.vertices[ctx.num_vertices].cy1 = @truncate(cy1);
             }
@@ -1976,9 +1979,9 @@ const open_type = struct {
         }
     };
 
-    fn glyphBox(tt: *const TrueType, glyph: GlyphIndex) error{GlyphNotFound}!BitmapBox {
+    fn glyphBoxT2(tt: *const TrueType, glyph: GlyphIndex) error{GlyphNotFound}!BitmapBox {
         var ctx = CharstringCtx.init(.{ .mode = .bounds }, undefined);
-        runCharstring(tt, glyph, &ctx) catch return .{ .x0 = 0, .y0 = 0, .x1 = 0, .y1 = 0 };
+        runCharstring(&tt.cff_data, glyph, &ctx) catch return .{ .x0 = 0, .y0 = 0, .x1 = 0, .y1 = 0 };
 
         return .{
             .x0 = ctx.min_x,
@@ -1988,18 +1991,18 @@ const open_type = struct {
         };
     }
 
-    fn glyphShape(tt: *const TrueType, gpa: Allocator, glyph: GlyphIndex) GlyphBitmapError![]Vertex {
+    fn glyphShapeT2(tt: *const TrueType, gpa: Allocator, glyph: GlyphIndex) GlyphBitmapError![]Vertex {
         // mode=bounds to get bounds and num_vertices
         var count_ctx = CharstringCtx.init(.{ .mode = .bounds }, undefined);
-        try runCharstring(tt, glyph, &count_ctx);
+        try runCharstring(&tt.cff_data, glyph, &count_ctx);
         const vertices = try gpa.alloc(Vertex, count_ctx.num_vertices);
         errdefer gpa.free(vertices);
         // mode=verts to assign vertices
         var out_ctx = CharstringCtx.init(.{ .mode = .verts }, vertices.ptr);
-        try runCharstring(tt, glyph, &out_ctx);
+        try runCharstring(&tt.cff_data, glyph, &out_ctx);
         assert(out_ctx.num_vertices == count_ctx.num_vertices);
         std.log.debug(
-            "glyphShape() first {d:.1},{d:.1} xy {d:.1},{d:.1} min {d:.1},{d:.1} max {d:.1},{d:.1} num_vertices {}",
+            "glyphShapeT2() first {d:.1},{d:.1} xy {d:.1},{d:.1} min {d:.1},{d:.1} max {d:.1},{d:.1} num_vertices {}",
             .{ count_ctx.first_x, count_ctx.first_y, count_ctx.x, count_ctx.y, count_ctx.min_x, count_ctx.min_y, count_ctx.max_x, count_ctx.max_y, count_ctx.num_vertices },
         );
 
@@ -2047,7 +2050,7 @@ const open_type = struct {
         }
     };
 
-    fn runCharstring(tt: *const TrueType, glyph: GlyphIndex, ctx: *CharstringCtx) !void {
+    fn runCharstring(cff_data: *const CffData, glyph: GlyphIndex, ctx: *CharstringCtx) !void {
         std.log.debug("runCharstring() glyphIndex {}", .{glyph});
 
         var maskbits: u32 = 0;
@@ -2060,7 +2063,7 @@ const open_type = struct {
         var subr_stack: std.ArrayList(Buf) = .initBuffer(&subr_buf);
         var subrs = tt.subrs;
         // this currently ignores the initial width value, which isn't needed if we have hmtx
-        var b = tt.charstrings.cffIndexGet(glyph);
+        var b = cff_data.charstrings.cffIndexGet(glyph);
 
         while (b.cursor < b.size) {
             var i: u32 = 0;
@@ -2193,8 +2196,8 @@ const open_type = struct {
                 },
                 Instruction.callsubr.asInt() => { // 0x0A
                     if (!has_subrs) {
-                        if (tt.fdselect.size != 0)
-                            subrs = getGlyphSubrs(tt, glyph);
+                        if (cff_data.fdselect.size != 0)
+                            subrs = getGlyphSubrs(cff_data, glyph);
                         has_subrs = true;
                     }
                     continue :sw Instruction.callgsubr.asInt();
@@ -2207,7 +2210,7 @@ const open_type = struct {
                     b = (if (b0 == Instruction.callsubr.asInt()) // 0x0A
                         subrs
                     else
-                        tt.gsubrs).getSubr(@bitCast(v));
+                        cff_data.gsubrs).getSubr(@bitCast(v));
                     if (b.size == 0) return charstringErr("subr not found");
                     b.cursor = 0;
                     clear_stack = false;
@@ -2319,9 +2322,9 @@ const open_type = struct {
         return charstringErr("no endchar");
     }
 
-    fn getGlyphSubrs(tt: *const TrueType, glyph: GlyphIndex) Buf {
+    fn getGlyphSubrs(cff_data: *const CffData, glyph: GlyphIndex) Buf {
         var fdselector: u32 = std.math.maxInt(u32);
-        var fdselect = tt.fdselect;
+        var fdselect = cff_data.fdselect;
         // std.log.debug("getGlyphSubrs fdselect {}", .{fdselect});
         fdselect.seek(0);
 
@@ -2346,6 +2349,10 @@ const open_type = struct {
         }
         // what was this line? it does nothing. why was it in the original c code?
         // if (fdselector == -1) new_buf(NULL, 0);
-        return tt.cff.getSubrs(tt.fontdicts.cffIndexGet(@enumFromInt(fdselector)));
+        return cff_data.cff.getSubrs(cff_data.fontdicts.cffIndexGet(@enumFromInt(fdselector)));
     }
 };
+
+// ---
+// end opentype specific code
+// ---
