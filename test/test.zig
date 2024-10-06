@@ -5,16 +5,25 @@ const expectEqualStrings = std.testing.expectEqualStrings;
 const expectEqualSlices = std.testing.expectEqualSlices;
 
 const TrueType = @import("TrueType");
-const ttf_data = @embedFile("GoNotoCurrent-Regular.ttf");
 const c = @import("c");
 
 const max_codepoint = 0x10FFFF;
 
-test "glyph index lookup" {
+const test_data = blk: {
+    const filenames: []const [:0]const u8 = &.{
+        "GoNotoCurrent-Regular.ttf",
+        "StandardSymbolsPS.otf",
+    };
+    var result: [filenames.len][2][:0]const u8 = undefined;
+    for (0..filenames.len) |i| result[i] = .{ filenames[i], @embedFile(filenames[i]) };
+    break :blk result;
+};
+
+fn testIndexLookup(ttf_data: []const u8) !void {
     const ttf = try TrueType.load(ttf_data);
 
     var stb_font: c.stbtt_fontinfo = undefined;
-    try expect(c.stbtt_InitFont(&stb_font, ttf_data, 0) != 0);
+    try expect(c.stbtt_InitFont(&stb_font, ttf_data.ptr, 0) != 0);
 
     try expectEqualInts(stb_font.loca, ttf.table_offsets[@intFromEnum(TrueType.TableId.loca)]);
     try expectEqualInts(stb_font.head, ttf.table_offsets[@intFromEnum(TrueType.TableId.head)]);
@@ -46,10 +55,20 @@ test "glyph index lookup" {
     }
 }
 
-test "glyph h metrics" {
+test "glyph index lookup" {
+    for (test_data) |td| {
+        const filename, const ttf_data = td;
+        testIndexLookup(ttf_data) catch |e| {
+            std.log.err("test failure from {s}\n", .{filename});
+            return e;
+        };
+    }
+}
+
+fn testHMetrics(ttf_data: []const u8) !void {
     const ttf = try TrueType.load(ttf_data);
     var stb_font: c.stbtt_fontinfo = undefined;
-    try expect(c.stbtt_InitFont(&stb_font, ttf_data, 0) != 0);
+    try expect(c.stbtt_InitFont(&stb_font, ttf_data.ptr, 0) != 0);
     try expectEqualInts(stb_font.numGlyphs, ttf.glyphs_len);
 
     for (0..ttf.glyphs_len) |glyph_index| {
@@ -65,10 +84,20 @@ test "glyph h metrics" {
     }
 }
 
-test "glyph kern advance" {
+test "glyph h metrics" {
+    for (test_data) |td| {
+        const filename, const ttf_data = td;
+        testHMetrics(ttf_data) catch |e| {
+            std.log.err("test failure from {s}\n", .{filename});
+            return e;
+        };
+    }
+}
+
+fn testKernAdvance(ttf_data: []const u8) !void {
     const ttf = try TrueType.load(ttf_data);
     var stb_font: c.stbtt_fontinfo = undefined;
-    try expect(c.stbtt_InitFont(&stb_font, ttf_data, 0) != 0);
+    try expect(c.stbtt_InitFont(&stb_font, ttf_data.ptr, 0) != 0);
     try expectEqualInts(stb_font.numGlyphs, ttf.glyphs_len);
 
     // I tested this with every combination of pairs once and it fully passed,
@@ -87,12 +116,22 @@ test "glyph kern advance" {
     }
 }
 
-test "glyph bitmap rendering" {
+test "glyph kern advance" {
+    for (test_data) |td| {
+        const filename, const ttf_data = td;
+        testKernAdvance(ttf_data) catch |e| {
+            std.log.err("test failure from {s}\n", .{filename});
+            return e;
+        };
+    }
+}
+
+fn testBitmapRendering(ttf_data: []const u8) !void {
     const gpa = std.testing.allocator;
 
     const ttf = try TrueType.load(ttf_data);
     var stb_font: c.stbtt_fontinfo = undefined;
-    try expect(c.stbtt_InitFont(&stb_font, ttf_data, 0) != 0);
+    try expect(c.stbtt_InitFont(&stb_font, ttf_data.ptr, 0) != 0);
     try expectEqualInts(stb_font.numGlyphs, ttf.glyphs_len);
 
     var buffer: std.ArrayListUnmanaged(u8) = .empty;
@@ -119,6 +158,7 @@ test "glyph bitmap rendering" {
                 continue;
             },
             error.OutOfMemory => return error.OutOfMemory,
+            error.Charstring => return error.Charstring,
         };
 
         try expectEqualInts(stb_width, dims.width);
@@ -126,8 +166,23 @@ test "glyph bitmap rendering" {
         try expectEqualInts(stb_xoff, dims.off_x);
         try expectEqualInts(stb_yoff, dims.off_y);
         try expectEqual(buffer.items.len, dims.width * dims.height);
-        // 55 of the glyphs have some bytes off by exactly 1.
-        try expectNearlyEqual(stb_pixels[0..buffer.items.len], buffer.items);
+        // stb sometimes returns null pixels given otf data
+        if (stb_pixels) |pixels| {
+            // 55 of the glyphs have some bytes off by exactly 1.
+            try expectNearlyEqual(pixels[0..buffer.items.len], buffer.items);
+        } else {
+            try std.testing.expectEqual(0, buffer.items.len);
+        }
+    }
+}
+
+test "glyph bitmap rendering" {
+    for (test_data) |td| {
+        const filename, const ttf_data = td;
+        testBitmapRendering(ttf_data) catch |e| {
+            std.log.err("test failure from {s}\n", .{filename});
+            return e;
+        };
     }
 }
 
