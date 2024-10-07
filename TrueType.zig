@@ -298,12 +298,31 @@ pub fn glyphBitmapSubpixel(
 }
 
 pub fn scaleForPixelHeight(tt: *const TrueType, height: f32) f32 {
+    const vm = tt.verticalMetrics();
+    const fheight: f32 = @floatFromInt(vm.ascent - vm.descent);
+    return height / fheight;
+}
+
+pub const VerticalMetrics = struct {
+    /// The coordinate above the baseline the font extends.
+    ascent: i16,
+    /// The coordinate below the baseline the font extends (typically negative).
+    descent: i16,
+    /// The spacing between one row's descent and the next row's ascent.
+    line_gap: i16,
+};
+
+/// A typical expression for advancing the vertical position is
+/// `ascent - descent + lineGap`. These are expressed in unscaled coordinates,
+/// which are typically then multiplied by the scale factor for a given font size.
+pub fn verticalMetrics(tt: *const TrueType) VerticalMetrics {
     const bytes = tt.ttf_bytes;
     const hhea = tt.table_offsets[@intFromEnum(TableId.hhea)];
-    const a = readInt(i16, bytes[hhea + 4 ..][0..2], .big);
-    const b = readInt(i16, bytes[hhea + 6 ..][0..2], .big);
-    const fheight: f32 = @floatFromInt(a - b);
-    return height / fheight;
+    return .{
+        .ascent = readInt(i16, bytes[hhea + 4 ..][0..2], .big),
+        .descent = readInt(i16, bytes[hhea + 6 ..][0..2], .big),
+        .line_gap = readInt(i16, bytes[hhea + 8 ..][0..2], .big),
+    };
 }
 
 pub const HMetrics = struct {

@@ -24,6 +24,17 @@ test "glyph index lookup" {
     try expectEqualInts(stb_font.kern, ttf.table_offsets[@intFromEnum(TrueType.TableId.kern)]);
     try expectEqualInts(stb_font.gpos, ttf.table_offsets[@intFromEnum(TrueType.TableId.GPOS)]);
 
+    {
+        var stb_ascent: c_int = undefined;
+        var stb_descent: c_int = undefined;
+        var stb_line_gap: c_int = undefined;
+        c.stbtt_GetFontVMetrics(&stb_font, &stb_ascent, &stb_descent, &stb_line_gap);
+        const vm = ttf.verticalMetrics();
+        try expectEqualInts(stb_ascent, vm.ascent);
+        try expectEqualInts(stb_descent, vm.descent);
+        try expectEqualInts(stb_line_gap, vm.line_gap);
+    }
+
     try expectEqualInts(stb_font.numGlyphs, ttf.glyphs_len);
     try expectEqualInts(stb_font.indexToLocFormat, ttf.index_to_loc_format);
     try expectEqualInts(stb_font.index_map, ttf.index_map);
