@@ -1789,20 +1789,16 @@ const Buf = struct {
 
     pub fn cffInt(b: *Buf) u32 {
         const b0: i32 = b.get8();
-        const r: u32 = if (b0 >= 32 and b0 <= 246)
-            @bitCast(b0 - 139)
-        else if (b0 >= 247 and b0 <= 250)
-            @bitCast((b0 - 247) * 256 + b.get8() + 108)
-        else if (b0 >= 251 and b0 <= 254)
-            @bitCast(-(b0 - 251) * 256 - b.get8() - 108)
-        else if (b0 == 28)
-            b.get16()
-        else if (b0 == 29)
-            b.get32()
-        else
-            @panic("invalid instruction");
-        // std.log.debug("cffInt() b0 {} r {}", .{ b0, r });
-        return r;
+        const result: u32 = switch (b0) {
+            32...246 => @bitCast(b0 - 139),
+            247...250 => @bitCast((b0 - 247) * 256 + b.get8() + 108),
+            251...254 => @bitCast(-(b0 - 251) * 256 - b.get8() - 108),
+            28 => b.get16(),
+            29 => b.get32(),
+            else => @panic("invalid instruction"),
+        };
+        // std.log.debug("cffInt() b0 {} result {}", .{ b0, result });
+        return result;
     }
 
     pub fn dictGetInts(b: *Buf, key: u32, outcount: u32, out: [*]u32) void {
@@ -1865,7 +1861,7 @@ const Buf = struct {
             1131
         else
             107;
-        if (n < 0 or n >= count) return .empty;
+        if (n >= count) return .empty;
         return idx.cffIndexGet(@enumFromInt(n));
     }
 };
@@ -1948,14 +1944,14 @@ pub const CharstringCtx = struct {
         ctx.x = ctx.first_x;
         ctx.first_y = ctx.y + dy;
         ctx.y = ctx.first_y;
-        std.log.debug("moveTo {d:.1},{d:.1}", .{ ctx.x, ctx.y });
+        // std.log.debug("moveTo {d:.1},{d:.1}", .{ ctx.x, ctx.y });
         try ctx.v(.vmove, @intFromFloat(ctx.x), @intFromFloat(ctx.y), 0, 0, 0, 0);
     }
 
     fn rlineTo(ctx: *CharstringCtx, dx: f32, dy: f32) !void {
         ctx.x += dx;
         ctx.y += dy;
-        std.log.debug("lineTo {d:.1},{d:.1}", .{ ctx.x, ctx.y });
+        // std.log.debug("lineTo {d:.1},{d:.1}", .{ ctx.x, ctx.y });
         try ctx.v(.vline, @intFromFloat(ctx.x), @intFromFloat(ctx.y), 0, 0, 0, 0);
     }
 
@@ -1966,7 +1962,7 @@ pub const CharstringCtx = struct {
         const cy2 = cy1 + dy2;
         ctx.x = cx2 + dx3;
         ctx.y = cy2 + dy3;
-        std.log.debug("curveTo {d:.1},{d:.1} {d:.1},{d:.1} {d:.1},{d:.1}", .{ ctx.x, ctx.y, cx1, cy1, cx2, cy2 });
+        // std.log.debug("curveTo {d:.1},{d:.1} {d:.1},{d:.1} {d:.1},{d:.1}", .{ ctx.x, ctx.y, cx1, cy1, cx2, cy2 });
         try ctx.v(
             .vcubic,
             @intFromFloat(ctx.x),
@@ -2001,10 +1997,10 @@ fn glyphShapeT2(tt: *const TrueType, gpa: Allocator, glyph: GlyphIndex) GlyphBit
     var out_ctx = CharstringCtx.init(.{ .mode = .verts }, vertices.ptr);
     try runCharstring(&tt.cff_data, glyph, &out_ctx);
     assert(out_ctx.num_vertices == count_ctx.num_vertices);
-    std.log.debug(
-        "glyphShapeT2() first {d:.1},{d:.1} xy {d:.1},{d:.1} min {d:.1},{d:.1} max {d:.1},{d:.1} num_vertices {}",
-        .{ count_ctx.first_x, count_ctx.first_y, count_ctx.x, count_ctx.y, count_ctx.min_x, count_ctx.min_y, count_ctx.max_x, count_ctx.max_y, count_ctx.num_vertices },
-    );
+    // std.log.debug(
+    //     "glyphShapeT2() first {d:.1},{d:.1} xy {d:.1},{d:.1} min {d:.1},{d:.1} max {d:.1},{d:.1} num_vertices {}",
+    //     .{ count_ctx.first_x, count_ctx.first_y, count_ctx.x, count_ctx.y, count_ctx.min_x, count_ctx.min_y, count_ctx.max_x, count_ctx.max_y, count_ctx.num_vertices },
+    // );
 
     return out_ctx.vertices[0..out_ctx.num_vertices];
 }
@@ -2051,7 +2047,7 @@ const Instruction = enum(u8) {
 };
 
 fn runCharstring(cff_data: *const CffData, glyph: GlyphIndex, ctx: *CharstringCtx) !void {
-    std.log.debug("runCharstring() glyphIndex {}", .{glyph});
+    // std.log.debug("runCharstring() glyphIndex {}", .{glyph});
 
     var maskbits: u32 = 0;
     var in_header = true;
