@@ -488,7 +488,7 @@ fn glyphKernAdvanceKern(tt: *const TrueType, a: GlyphIndex, b: GlyphIndex) i16 {
     return 0;
 }
 
-const Vertex = struct {
+pub const Vertex = struct {
     x: i16,
     y: i16,
     cx: i16,
@@ -497,7 +497,7 @@ const Vertex = struct {
     cy1: i16,
     type: Type,
 
-    const Type = enum(u8) {
+    pub const Type = enum(u8) {
         vmove = 1,
         vline = 2,
         vcurve = 3,
@@ -514,7 +514,7 @@ const Vertex = struct {
     }
 };
 
-fn glyphShape(tt: *const TrueType, gpa: Allocator, glyph: GlyphIndex) GlyphBitmapError![]Vertex {
+pub fn glyphShape(tt: *const TrueType, gpa: Allocator, glyph: GlyphIndex) GlyphBitmapError![]Vertex {
     const bytes = tt.ttf_bytes;
     const g = try glyfOffset(tt, glyph);
     var vertices: ArrayList(Vertex) = .empty;
