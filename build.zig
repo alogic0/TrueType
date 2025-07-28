@@ -13,9 +13,11 @@ pub fn build(b: *std.Build) void {
 
     const stb_truetype_object = b.addObject(.{
         .name = "stb_truetype",
-        .target = target,
-        .optimize = optimize,
-        .link_libc = true,
+        .root_module = b.createModule(.{
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
     });
     stb_truetype_object.addCSourceFile(.{
         .file = b.path("test/stb_truetype.c"),
@@ -28,9 +30,11 @@ pub fn build(b: *std.Build) void {
     });
 
     const unit_tests = b.addTest(.{
-        .root_source_file = b.path("test/test.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/test.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
         .use_llvm = use_llvm,
         .use_lld = use_llvm,
     });
