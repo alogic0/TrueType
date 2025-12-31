@@ -777,14 +777,14 @@ fn glyfOffset(tt: *const TrueType, glyph: GlyphIndex) error{GlyphNotFound}!u32 {
     return g1;
 }
 
-const BitmapBox = struct {
+pub const BitmapBox = struct {
     x0: i32,
     y0: i32,
     x1: i32,
     y1: i32,
 };
 
-fn glyphBitmapBoxSubpixel(
+pub fn glyphBitmapBoxSubpixel(
     tt: *const TrueType,
     glyph: GlyphIndex,
     scale_x: f32,
@@ -804,7 +804,16 @@ fn glyphBitmapBoxSubpixel(
     };
 }
 
-fn glyphBox(tt: *const TrueType, glyph: GlyphIndex) error{GlyphNotFound}!BitmapBox {
+pub fn glyphBitmapBox(
+    tt: *const TrueType,
+    glyph: GlyphIndex,
+    scale_x: f32,
+    scale_y: f32,
+) BitmapBox {
+    return glyphBitmapBoxSubpixel(tt, glyph, scale_x, scale_y, 0, 0);
+}
+
+pub fn glyphBox(tt: *const TrueType, glyph: GlyphIndex) error{GlyphNotFound}!BitmapBox {
     return if (tt.cff_data.cff.size != 0)
         tt.glyphBoxT2(glyph)
     else
