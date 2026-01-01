@@ -17,7 +17,7 @@ index_to_loc_format: u16,
 glyphs_len: u32,
 cff_data: CffData,
 
-pub const GlyphIndex = enum(u32) { _ };
+pub const GlyphIndex = enum(u16) { _ };
 
 pub const TableId = enum {
     cmap,
@@ -352,7 +352,7 @@ pub const HMetrics = struct {
 };
 
 pub fn glyphHMetrics(tt: *const TrueType, glyph: GlyphIndex) HMetrics {
-    const glyph_index = @intFromEnum(glyph);
+    const glyph_index: usize = @intFromEnum(glyph);
     const bytes = tt.ttf_bytes;
     const hhea = tt.table_offsets[@intFromEnum(TableId.hhea)];
     const hmtx = tt.table_offsets[@intFromEnum(TableId.hmtx)];
@@ -490,7 +490,7 @@ fn glyphKernAdvanceKern(tt: *const TrueType, a: GlyphIndex, b: GlyphIndex) i16 {
 
     var l: u32 = 0;
     var r: u32 = readInt(u16, bytes[kern + 10 ..][0..2], .big) - 1;
-    const needle: u32 = @intFromEnum(a) << 16 | @intFromEnum(b);
+    const needle: u32 = @as(u32, @intFromEnum(a)) << 16 | @as(u32, @intFromEnum(b));
     while (l <= r) {
         const m: u32 = (l + r) >> 1;
         const straw: u32 = readInt(u32, bytes[kern + 18 + (m * 6) ..][0..4], .big); // note: unaligned read
@@ -759,7 +759,7 @@ fn glyphShapeTT(tt: *const TrueType, gpa: Allocator, glyph: GlyphIndex) GlyphBit
 
 fn glyfOffset(tt: *const TrueType, glyph: GlyphIndex) error{GlyphNotFound}!u32 {
     const bytes = tt.ttf_bytes;
-    const glyph_index: u32 = @intFromEnum(glyph);
+    const glyph_index: usize = @intFromEnum(glyph);
 
     assert(glyph_index < tt.glyphs_len);
     assert(tt.index_to_loc_format < 2);
@@ -1773,7 +1773,7 @@ const Buf = struct {
         b.seek(0);
         const count = b.get16();
         const offsize = b.get8();
-        const i = @intFromEnum(glyph);
+        const i: u32 = @intFromEnum(glyph);
         assert(i < count);
         assert(offsize >= 1 and offsize <= 4);
         b.skip(i * offsize);
