@@ -17,7 +17,10 @@ index_to_loc_format: u16,
 glyphs_len: u32,
 cff_data: CffData,
 
-pub const GlyphIndex = enum(u16) { _ };
+pub const GlyphIndex = enum(u16) {
+    notdef = 0,
+    _,
+};
 
 pub const TableId = enum {
     cmap,
