@@ -135,7 +135,7 @@ pub fn load(bytes: []const u8) !TrueType {
     };
 }
 
-pub fn codepointGlyphIndex(tt: *const TrueType, codepoint: u21) ?GlyphIndex {
+pub fn codepointGlyphIndex(tt: *const TrueType, codepoint: u21) GlyphIndex {
     const bytes = tt.ttf_bytes;
     const index_map = tt.index_map;
     const format = readInt(u16, bytes[index_map..][0..2], .big);
@@ -145,11 +145,11 @@ pub fn codepointGlyphIndex(tt: *const TrueType, codepoint: u21) ?GlyphIndex {
             if (codepoint < n - 6)
                 return @enumFromInt(bytes[index_map + 6 + codepoint]);
 
-            return null;
+            return .notdef;
         },
         2 => {
             if (debug_todo) @panic("TODO implement high-byte mapping for japanese/chinese/korean");
-            return null;
+            return .notdef;
         },
         4 => {
             const seg_count = readInt(u16, bytes[index_map + 6 ..][0..2], .big) >> 1;
@@ -162,7 +162,7 @@ pub fn codepointGlyphIndex(tt: *const TrueType, codepoint: u21) ?GlyphIndex {
             var search = end_count;
 
             if (codepoint > 0xffff)
-                return null;
+                return .notdef;
 
             // They lie from end_count .. end_count + seg_count but search_range
             // is the nearest power of two.
@@ -185,7 +185,7 @@ pub fn codepointGlyphIndex(tt: *const TrueType, codepoint: u21) ?GlyphIndex {
             const start = readInt(u16, bytes[index_map + 14 + seg_count * 2 + 2 + 2 * item ..][0..2], .big);
             const last = readInt(u16, bytes[end_count + 2 * item ..][0..2], .big);
             if (codepoint < start or codepoint > last)
-                return null;
+                return .notdef;
 
             const offset = readInt(u16, bytes[index_map + 14 + seg_count * 6 + 2 + 2 * item ..][0..2], .big);
             if (offset == 0) {
@@ -202,7 +202,7 @@ pub fn codepointGlyphIndex(tt: *const TrueType, codepoint: u21) ?GlyphIndex {
             if (codepoint >= first and codepoint < first + count)
                 return @enumFromInt(readInt(u16, bytes[index_map + 10 + (codepoint - first) * 2 ..][0..2], .big));
 
-            return null;
+            return .notdef;
         },
         12, 13 => {
             const ngroups = readInt(u32, bytes[index_map + 12 ..][0..4], .big);
@@ -223,11 +223,11 @@ pub fn codepointGlyphIndex(tt: *const TrueType, codepoint: u21) ?GlyphIndex {
                     return @enumFromInt(start_glyph + if (format == 12) codepoint - start_char else 0);
                 }
             }
-            return null;
+            return .notdef;
         },
         else => {
             if (debug_todo) @panic("TODO implement glyphIndex for more formats");
-            return null;
+            return .notdef;
         },
     }
 }
