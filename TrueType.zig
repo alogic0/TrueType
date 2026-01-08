@@ -17,7 +17,10 @@ index_to_loc_format: u16,
 glyphs_len: u32,
 cff_data: CffData,
 
-pub const GlyphIndex = enum(u32) { _ };
+pub const GlyphIndex = enum(u16) {
+    notdef = 0,
+    _,
+};
 
 pub const TableId = enum {
     cmap,
@@ -132,7 +135,7 @@ pub fn load(bytes: []const u8) !TrueType {
     };
 }
 
-pub fn codepointGlyphIndex(tt: *const TrueType, codepoint: u21) ?GlyphIndex {
+pub fn codepointGlyphIndex(tt: *const TrueType, codepoint: u21) GlyphIndex {
     const bytes = tt.ttf_bytes;
     const index_map = tt.index_map;
     const format = readInt(u16, bytes[index_map..][0..2], .big);
@@ -142,11 +145,11 @@ pub fn codepointGlyphIndex(tt: *const TrueType, codepoint: u21) ?GlyphIndex {
             if (codepoint < n - 6)
                 return @enumFromInt(bytes[index_map + 6 + codepoint]);
 
-            return null;
+            return .notdef;
         },
         2 => {
             if (debug_todo) @panic("TODO implement high-byte mapping for japanese/chinese/korean");
-            return null;
+            return .notdef;
         },
         4 => {
             const seg_count = readInt(u16, bytes[index_map + 6 ..][0..2], .big) >> 1;
@@ -159,7 +162,7 @@ pub fn codepointGlyphIndex(tt: *const TrueType, codepoint: u21) ?GlyphIndex {
             var search = end_count;
 
             if (codepoint > 0xffff)
-                return null;
+                return .notdef;
 
             // They lie from end_count .. end_count + seg_count but search_range
             // is the nearest power of two.
@@ -182,7 +185,7 @@ pub fn codepointGlyphIndex(tt: *const TrueType, codepoint: u21) ?GlyphIndex {
             const start = readInt(u16, bytes[index_map + 14 + seg_count * 2 + 2 + 2 * item ..][0..2], .big);
             const last = readInt(u16, bytes[end_count + 2 * item ..][0..2], .big);
             if (codepoint < start or codepoint > last)
-                return null;
+                return .notdef;
 
             const offset = readInt(u16, bytes[index_map + 14 + seg_count * 6 + 2 + 2 * item ..][0..2], .big);
             if (offset == 0) {
@@ -199,7 +202,7 @@ pub fn codepointGlyphIndex(tt: *const TrueType, codepoint: u21) ?GlyphIndex {
             if (codepoint >= first and codepoint < first + count)
                 return @enumFromInt(readInt(u16, bytes[index_map + 10 + (codepoint - first) * 2 ..][0..2], .big));
 
-            return null;
+            return .notdef;
         },
         12, 13 => {
             const ngroups = readInt(u32, bytes[index_map + 12 ..][0..4], .big);
@@ -220,11 +223,11 @@ pub fn codepointGlyphIndex(tt: *const TrueType, codepoint: u21) ?GlyphIndex {
                     return @enumFromInt(start_glyph + if (format == 12) codepoint - start_char else 0);
                 }
             }
-            return null;
+            return .notdef;
         },
         else => {
             if (debug_todo) @panic("TODO implement glyphIndex for more formats");
-            return null;
+            return .notdef;
         },
     }
 }
@@ -330,7 +333,7 @@ pub const VerticalMetrics = struct {
 };
 
 /// A typical expression for advancing the vertical position is
-/// `ascent - descent + lineGap`. These are expressed in unscaled coordinates,
+/// `ascent - descent + line_gap`. These are expressed in unscaled coordinates,
 /// which are typically then multiplied by the scale factor for a given font size.
 pub fn verticalMetrics(tt: *const TrueType) VerticalMetrics {
     const bytes = tt.ttf_bytes;
@@ -352,7 +355,7 @@ pub const HMetrics = struct {
 };
 
 pub fn glyphHMetrics(tt: *const TrueType, glyph: GlyphIndex) HMetrics {
-    const glyph_index = @intFromEnum(glyph);
+    const glyph_index: usize = @intFromEnum(glyph);
     const bytes = tt.ttf_bytes;
     const hhea = tt.table_offsets[@intFromEnum(TableId.hhea)];
     const hmtx = tt.table_offsets[@intFromEnum(TableId.hmtx)];
@@ -490,7 +493,7 @@ fn glyphKernAdvanceKern(tt: *const TrueType, a: GlyphIndex, b: GlyphIndex) i16 {
 
     var l: u32 = 0;
     var r: u32 = readInt(u16, bytes[kern + 10 ..][0..2], .big) - 1;
-    const needle: u32 = @intFromEnum(a) << 16 | @intFromEnum(b);
+    const needle: u32 = @as(u32, @intFromEnum(a)) << 16 | @as(u32, @intFromEnum(b));
     while (l <= r) {
         const m: u32 = (l + r) >> 1;
         const straw: u32 = readInt(u32, bytes[kern + 18 + (m * 6) ..][0..4], .big); // note: unaligned read
@@ -759,7 +762,7 @@ fn glyphShapeTT(tt: *const TrueType, gpa: Allocator, glyph: GlyphIndex) GlyphBit
 
 fn glyfOffset(tt: *const TrueType, glyph: GlyphIndex) error{GlyphNotFound}!u32 {
     const bytes = tt.ttf_bytes;
-    const glyph_index: u32 = @intFromEnum(glyph);
+    const glyph_index: usize = @intFromEnum(glyph);
 
     assert(glyph_index < tt.glyphs_len);
     assert(tt.index_to_loc_format < 2);
@@ -777,14 +780,14 @@ fn glyfOffset(tt: *const TrueType, glyph: GlyphIndex) error{GlyphNotFound}!u32 {
     return g1;
 }
 
-const BitmapBox = struct {
+pub const BitmapBox = struct {
     x0: i32,
     y0: i32,
     x1: i32,
     y1: i32,
 };
 
-fn glyphBitmapBoxSubpixel(
+pub fn glyphBitmapBoxSubpixel(
     tt: *const TrueType,
     glyph: GlyphIndex,
     scale_x: f32,
@@ -804,7 +807,16 @@ fn glyphBitmapBoxSubpixel(
     };
 }
 
-fn glyphBox(tt: *const TrueType, glyph: GlyphIndex) error{GlyphNotFound}!BitmapBox {
+pub fn glyphBitmapBox(
+    tt: *const TrueType,
+    glyph: GlyphIndex,
+    scale_x: f32,
+    scale_y: f32,
+) BitmapBox {
+    return glyphBitmapBoxSubpixel(tt, glyph, scale_x, scale_y, 0, 0);
+}
+
+pub fn glyphBox(tt: *const TrueType, glyph: GlyphIndex) error{GlyphNotFound}!BitmapBox {
     return if (tt.cff_data.cff.size != 0)
         tt.glyphBoxT2(glyph)
     else
@@ -1764,7 +1776,7 @@ const Buf = struct {
         b.seek(0);
         const count = b.get16();
         const offsize = b.get8();
-        const i = @intFromEnum(glyph);
+        const i: u32 = @intFromEnum(glyph);
         assert(i < count);
         assert(offsize >= 1 and offsize <= 4);
         b.skip(i * offsize);
