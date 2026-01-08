@@ -8,7 +8,8 @@ const assert = std.debug.assert;
 const ArrayList = std.ArrayListUnmanaged;
 
 const TrueType = @This();
-const debug_todo = true;
+const build_options = @import("build_options");
+const debug_todo = build_options.debug_todo or builtin.is_test;
 
 table_offsets: [@typeInfo(TableId).@"enum".fields.len]u32,
 ttf_bytes: []const u8,

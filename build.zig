@@ -4,12 +4,17 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     const use_llvm = b.option(bool, "use-llvm", "LLVM Zig backend");
+    const debug_todo = b.option(bool, "debug-todo", "crash on TODOs") orelse false;
+
 
     const tt_mod = b.addModule("TrueType", .{
         .root_source_file = b.path("TrueType.zig"),
         .target = target,
         .optimize = optimize,
     });
+    const options = b.addOptions();
+    options.addOption(bool, "debug_todo", debug_todo);
+    tt_mod.addOptions("build_options", options);
 
     const stb_truetype_object = b.addObject(.{
         .name = "stb_truetype",
