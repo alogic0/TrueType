@@ -49,7 +49,7 @@ fn testIndexLookup(ttf_data: []const u8) !void {
     try expectEqualInts(stb_font.index_map, ttf.index_map);
 
     for (0..max_codepoint) |codepoint| {
-        const zig_answer = if (ttf.codepointGlyphIndex(@intCast(codepoint))) |x| @intFromEnum(x) else 0;
+        const zig_answer = @intFromEnum(ttf.codepointGlyphIndex(@intCast(codepoint)));
         const stb_answer = c.stbtt_FindGlyphIndex(&stb_font, @intCast(codepoint));
         try expectEqualInts(stb_answer, zig_answer);
     }

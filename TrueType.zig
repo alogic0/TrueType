@@ -333,7 +333,7 @@ pub const VerticalMetrics = struct {
 };
 
 /// A typical expression for advancing the vertical position is
-/// `ascent - descent + lineGap`. These are expressed in unscaled coordinates,
+/// `ascent - descent + line_gap`. These are expressed in unscaled coordinates,
 /// which are typically then multiplied by the scale factor for a given font size.
 pub fn verticalMetrics(tt: *const TrueType) VerticalMetrics {
     const bytes = tt.ttf_bytes;
