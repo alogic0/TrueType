@@ -157,8 +157,7 @@ fn testBitmapRendering(ttf_data: []const u8) !void {
                 try expect(stb_pixels == null);
                 continue;
             },
-            error.OutOfMemory => return error.OutOfMemory,
-            error.Charstring => return error.Charstring,
+            else => |e| return e,
         };
 
         try expectEqualInts(stb_width, dims.width);

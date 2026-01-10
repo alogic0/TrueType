@@ -249,7 +249,34 @@ pub const GlyphBitmap = struct {
     };
 };
 
-pub const GlyphBitmapError = error{ OutOfMemory, GlyphNotFound, Charstring };
+pub const GlyphBitmapError = error{
+    OutOfMemory,
+    GlyphNotFound,
+    Unimplemented,
+    RMoveToStack,
+    VMoveToStack,
+    HMoveToStack,
+    RLineToStack,
+    VLineToStack,
+    HLineToStack,
+    HCurveToStack,
+    RCurveToStack,
+    RCurveLineStack,
+    CurveLineStack,
+    RLineCurveStack,
+    CallGSubRStack,
+    RecursionLimit,
+    SubRNotFound,
+    ReturnOutsideSubR,
+    HFlexStack,
+    FlexStack,
+    HFlex1Stack,
+    Flex1Stack,
+    CurveToStack,
+    ReservedOperator,
+    PushStackOverflow,
+    NoEndChar,
+};
 
 /// Caller owns returned memory.
 pub fn glyphBitmap(
@@ -2018,11 +2045,6 @@ fn glyphShapeT2(tt: *const TrueType, gpa: Allocator, glyph: GlyphIndex) GlyphBit
     return out_ctx.vertices[0..out_ctx.num_vertices];
 }
 
-fn charstringErr(s: []const u8) error{Charstring} {
-    std.log.err("{s}", .{s});
-    return error.Charstring;
-}
-
 const Instruction = enum(u8) {
     hintmask = 0x13,
     cntrmask = 0x14,
@@ -2060,8 +2082,6 @@ const Instruction = enum(u8) {
 };
 
 fn runCharstring(cff_data: *const CffData, glyph: GlyphIndex, ctx: *CharstringCtx) !void {
-    // std.log.debug("runCharstring() glyphIndex {}", .{glyph});
-
     var maskbits: u32 = 0;
     var in_header = true;
     var has_subrs = false;
@@ -2099,28 +2119,28 @@ fn runCharstring(cff_data: *const CffData, glyph: GlyphIndex, ctx: *CharstringCt
             },
             Instruction.rmoveto.asInt() => { // 0x15
                 in_header = false;
-                if (sp < 2) return charstringErr("rmoveto stack");
+                if (sp < 2) return error.RMoveToStack;
                 try ctx.rmoveTo(s[sp - 2], s[sp - 1]);
             },
             Instruction.vmoveto.asInt() => { // 0x04
                 in_header = false;
-                if (sp < 1) return charstringErr("vmoveto stack");
+                if (sp < 1) return error.VMoveToStack;
                 try ctx.rmoveTo(0, s[sp - 1]);
             },
             Instruction.hmoveto.asInt() => { // 0x16
                 in_header = false;
-                if (sp < 1) return charstringErr("hmoveto stack");
+                if (sp < 1) return error.HMoveToStack;
                 try ctx.rmoveTo(s[sp - 1], 0);
             },
             Instruction.rlineto.asInt() => { // 0x05
-                if (sp < 2) return charstringErr("rlineto stack");
+                if (sp < 2) return error.RLineToStack;
                 while (i + 1 < sp) : (i += 2)
                     try ctx.rlineTo(s[i], s[i + 1]);
             },
             // hlineto/vlineto and vhcurveto/hvcurveto alternate horizontal and vertical
             // starting from a different place.
             Instruction.vlineto.asInt() => { // 0x07
-                if (sp < 1) return charstringErr("vlineto stack");
+                if (sp < 1) return error.VLineToStack;
                 // std.log.debug("vlineto i {} sp {}", .{ i, sp });
                 while (true) {
                     if (i >= sp) break;
@@ -2132,7 +2152,7 @@ fn runCharstring(cff_data: *const CffData, glyph: GlyphIndex, ctx: *CharstringCt
                 }
             },
             Instruction.hlineto.asInt() => { // 0x06
-                if (sp < 1) return charstringErr("hlineto stack");
+                if (sp < 1) return error.HLineToStack;
                 // std.log.debug("hlineto i {} sp {}", .{ i, sp });
                 while (true) {
                     if (i >= sp) break;
@@ -2144,7 +2164,7 @@ fn runCharstring(cff_data: *const CffData, glyph: GlyphIndex, ctx: *CharstringCt
                 }
             },
             Instruction.hvcurveto.asInt() => { // 0x1F
-                if (sp < 4) return charstringErr("hvcurveto stack");
+                if (sp < 4) return error.HCurveToStack;
                 while (true) {
                     // std.log.debug("hvcurveto i {} sp {}", .{ i, sp });
                     if (i + 3 >= sp) break;
@@ -2156,7 +2176,7 @@ fn runCharstring(cff_data: *const CffData, glyph: GlyphIndex, ctx: *CharstringCt
                 }
             },
             Instruction.vhcurveto.asInt() => { // 0x1E
-                if (sp < 4) return charstringErr("vhcurveto stack");
+                if (sp < 4) return error.HCurveToStack;
                 while (true) {
                     // std.log.debug("vhcurveto i {} sp {}", .{ i, sp });
                     if (i + 3 >= sp) break;
@@ -2168,28 +2188,28 @@ fn runCharstring(cff_data: *const CffData, glyph: GlyphIndex, ctx: *CharstringCt
                 }
             },
             Instruction.rrcurveto.asInt() => { // 0x08
-                if (sp < 6) return charstringErr("rcurveline stack");
+                if (sp < 6) return error.RCurveToStack;
                 while (i + 5 < sp) : (i += 6)
                     try ctx.rccurveTo(s[i], s[i + 1], s[i + 2], s[i + 3], s[i + 4], s[i + 5]);
             },
             Instruction.rcurveline.asInt() => { // 0x18
-                if (sp < 8) return charstringErr("rcurveline stack");
+                if (sp < 8) return error.RCurveLineStack;
                 while (i + 5 < sp - 2) : (i += 6)
                     try ctx.rccurveTo(s[i], s[i + 1], s[i + 2], s[i + 3], s[i + 4], s[i + 5]);
-                if (i + 1 >= sp) return charstringErr("rcurveline stack");
+                if (i + 1 >= sp) return error.CurveLineStack;
                 try ctx.rlineTo(s[i], s[i + 1]);
             },
             Instruction.rlinecurve.asInt() => { // 0x19
-                if (sp < 8) return charstringErr("rlinecurve stack");
+                if (sp < 8) return error.RLineCurveStack;
                 while (i + 1 < sp - 6) : (i += 2)
                     try ctx.rlineTo(s[i], s[i + 1]);
-                if (i + 5 >= sp) return charstringErr("rlinecurve stack");
+                if (i + 5 >= sp) return error.RLineCurveStack;
                 try ctx.rccurveTo(s[i], s[i + 1], s[i + 2], s[i + 3], s[i + 4], s[i + 5]);
             },
             Instruction.vvcurveto.asInt(), // 0x1A
             Instruction.hhcurveto.asInt(), // 0x1B
             => {
-                if (sp < 4) return charstringErr("(vv|hh)curveto stack");
+                if (sp < 4) return error.CurveToStack;
                 var f: f32 = 0.0;
                 if (sp & 1 != 0) {
                     f = s[i];
@@ -2213,19 +2233,19 @@ fn runCharstring(cff_data: *const CffData, glyph: GlyphIndex, ctx: *CharstringCt
                 // FALLTHROUGH
             },
             Instruction.callgsubr.asInt() => { // 0x1D
-                sp = std.math.sub(u32, sp, 1) catch return charstringErr("call(g|)subr stack");
+                sp = std.math.sub(u32, sp, 1) catch return error.CallGSubRStack;
                 const v: i32 = @intFromFloat(@trunc(s[sp]));
-                subr_stack.appendBounded(b) catch return charstringErr("recursion limit");
+                subr_stack.appendBounded(b) catch return error.RecursionLimit;
                 b = (if (b0 == Instruction.callsubr.asInt()) // 0x0A
                     subrs
                 else
                     cff_data.gsubrs).getSubr(@bitCast(v));
-                if (b.size == 0) return charstringErr("subr not found");
+                if (b.size == 0) return error.SubRNotFound;
                 b.cursor = 0;
                 clear_stack = false;
             },
             Instruction.ret.asInt() => { // 0x0B
-                b = subr_stack.pop() orelse return charstringErr("return outside subr");
+                b = subr_stack.pop() orelse return error.ReturnOutsideSubR;
                 clear_stack = false;
             },
             Instruction.endchar.asInt() => { // 0x0E
@@ -2238,7 +2258,7 @@ fn runCharstring(cff_data: *const CffData, glyph: GlyphIndex, ctx: *CharstringCt
                     // @TODO These "flex" implementations ignore the flex-depth and resolution,
                     // and always draw beziers.
                     Instruction.hflex.asInt() => { // 0x22
-                        if (sp < 7) return charstringErr("hflex stack");
+                        if (sp < 7) return error.HFlexStack;
                         const dx1 = s[0];
                         const dx2 = s[1];
                         const dy2 = s[2];
@@ -2250,7 +2270,7 @@ fn runCharstring(cff_data: *const CffData, glyph: GlyphIndex, ctx: *CharstringCt
                         try ctx.rccurveTo(dx4, 0, dx5, -dy2, dx6, 0);
                     },
                     Instruction.flex.asInt() => { // 0x23
-                        if (sp < 13) return charstringErr("flex stack");
+                        if (sp < 13) return error.FlexStack;
                         const dx1 = s[0];
                         const dy1 = s[1];
                         const dx2 = s[2];
@@ -2268,7 +2288,7 @@ fn runCharstring(cff_data: *const CffData, glyph: GlyphIndex, ctx: *CharstringCt
                         try ctx.rccurveTo(dx4, dy4, dx5, dy5, dx6, dy6);
                     },
                     Instruction.hflex1.asInt() => { // 0x24
-                        if (sp < 9) return charstringErr("hflex1 stack");
+                        if (sp < 9) return error.HFlex1Stack;
                         const dx1 = s[0];
                         const dy1 = s[1];
                         const dx2 = s[2];
@@ -2282,7 +2302,7 @@ fn runCharstring(cff_data: *const CffData, glyph: GlyphIndex, ctx: *CharstringCt
                         try ctx.rccurveTo(dx4, 0, dx5, dy5, dx6, -(dy1 + dy2 + dy5));
                     },
                     Instruction.flex1.asInt() => { // 0x25
-                        if (sp < 11) return charstringErr("flex1 stack");
+                        if (sp < 11) return error.Flex1Stack;
                         const dx1 = s[0];
                         const dy1 = s[1];
                         const dx2 = s[2];
@@ -2305,12 +2325,12 @@ fn runCharstring(cff_data: *const CffData, glyph: GlyphIndex, ctx: *CharstringCt
                         try ctx.rccurveTo(dx4, dy4, dx5, dy5, dx6, dy6);
                     },
 
-                    else => return charstringErr("unimplemented"),
+                    else => return error.Unimplemented,
                 }
             },
             else => {
                 if (b0 != 255 and b0 != 28 and b0 < 32)
-                    return charstringErr("reserved operator");
+                    return error.ReservedOperator;
 
                 // push immediate
                 const f: f32 = if (b0 == 255)
@@ -2320,7 +2340,7 @@ fn runCharstring(cff_data: *const CffData, glyph: GlyphIndex, ctx: *CharstringCt
                     break :blk @floatFromInt(@as(i16, @truncate(@as(i32, @bitCast(b.cffInt())))));
                 };
                 // std.log.debug("f {d:.2}", .{f});
-                if (sp >= 48) return charstringErr("push stack overflow");
+                if (sp >= 48) return error.PushStackOverflow;
                 s[sp] = f;
                 sp += 1;
                 clear_stack = false;
@@ -2328,7 +2348,7 @@ fn runCharstring(cff_data: *const CffData, glyph: GlyphIndex, ctx: *CharstringCt
         }
         if (clear_stack) sp = 0;
     }
-    return charstringErr("no endchar");
+    return error.NoEndChar;
 }
 
 fn getGlyphSubrs(cff_data: *const CffData, glyph: GlyphIndex) Buf {
