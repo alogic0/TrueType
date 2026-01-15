@@ -562,7 +562,7 @@ pub const Vertex = struct {
     }
 };
 
-fn glyphShape(tt: *const TrueType, gpa: Allocator, glyph: GlyphIndex) GlyphBitmapError![]Vertex {
+pub fn glyphShape(tt: *const TrueType, gpa: Allocator, glyph: GlyphIndex) GlyphBitmapError![]Vertex {
     return if (tt.cff_data.cff.size != 0)
         tt.glyphShapeT2(gpa, glyph)
     else
