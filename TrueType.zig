@@ -54,10 +54,19 @@ const MicrosoftEncodingId = enum(u16) {
     unicode_full = 10,
 };
 
-pub fn load(bytes: []const u8) !TrueType {
+pub const LoadError = error{
+    /// The font file unexpectedly ended when more data was expected.
+    EndOfStream,
+    MissingRequiredTable,
+    IndexMapMissing,
+} || CffData.InitError;
+
+pub fn load(bytes: []const u8) LoadError!TrueType {
     // Find tables.
     var table_offsets: [@typeInfo(TableId).@"enum".field_names.len]u32 = @splat(0);
+    if (bytes.len < 6) return error.EndOfStream;
     const tables_len = readInt(u16, bytes[4..][0..2], .big);
+    if (12 + 16 * tables_len > bytes.len) return error.EndOfStream;
     var cff: u32 = 0;
     for (0..tables_len) |i| {
         const loc = 12 + 16 * i;
@@ -1701,7 +1710,11 @@ const CffData = struct {
         .fdselect = .empty,
     };
 
-    pub fn init(cff_offset: u32, bytes: [*]const u8) !CffData {
+    pub const InitError = error{
+        UnsupportedCffData,
+    };
+
+    pub fn init(cff_offset: u32, bytes: [*]const u8) InitError!CffData {
         var result: CffData = .empty;
         // TODO this should use size from table (not 512MB)
         result.cff = .init(bytes + cff_offset, 512 * 1024 * 1024);
