@@ -1174,11 +1174,8 @@ fn rasterizeSortedEdges(
     const arena = arena_allocator.allocator();
 
     var active: ?*ActiveEdge = null;
-    var scanline_buffer: [350]f32 = undefined;
 
-    const needed_scanline_len = result.w * 2 + 1;
-    assert(scanline_buffer.len >= needed_scanline_len);
-
+    const scanline_buffer = try arena.alloc(f32, result.w * 2 + 1);
     const scanline = scanline_buffer[0..result.w];
     const scanline2 = scanline_buffer[result.w..][0 .. result.w + 1];
 
