@@ -6,7 +6,6 @@ pub fn build(b: *std.Build) void {
     const use_llvm = b.option(bool, "use-llvm", "LLVM Zig backend");
     const debug_todo = b.option(bool, "debug-todo", "crash on TODOs") orelse false;
 
-
     const tt_mod = b.addModule("TrueType", .{
         .root_source_file = b.path("TrueType.zig"),
         .target = target,
@@ -24,7 +23,7 @@ pub fn build(b: *std.Build) void {
             .link_libc = true,
         }),
     });
-    stb_truetype_object.addCSourceFile(.{
+    stb_truetype_object.root_module.addCSourceFile(.{
         .file = b.path("test/stb_truetype.c"),
     });
     const stb_truetype_bindings = b.addTranslateC(.{
@@ -46,7 +45,7 @@ pub fn build(b: *std.Build) void {
     unit_tests.filters = b.option([]const []const u8, "test-filter", "string to match for unit tests") orelse &.{};
     unit_tests.root_module.addImport("TrueType", tt_mod);
     unit_tests.root_module.addImport("c", stb_truetype_bindings.createModule());
-    unit_tests.addObject(stb_truetype_object);
+    unit_tests.root_module.addObject(stb_truetype_object);
 
     const run_unit_tests = b.addRunArtifact(unit_tests);
     const test_step = b.step("test", "Run unit tests");
