@@ -56,7 +56,7 @@ const MicrosoftEncodingId = enum(u16) {
 
 pub fn load(bytes: []const u8) !TrueType {
     // Find tables.
-    var table_offsets = [1]u32{0} ** @typeInfo(TableId).@"enum".fields.len;
+    var table_offsets: [@typeInfo(TableId).@"enum".fields.len]u32 = @splat(0);
     const tables_len = readInt(u16, bytes[4..][0..2], .big);
     var cff: u32 = 0;
     for (0..tables_len) |i| {
@@ -2083,7 +2083,7 @@ fn runCharstring(cff_data: *const CffData, glyph: GlyphIndex, ctx: *CharstringCt
     var in_header = true;
     var has_subrs = false;
     var clear_stack = false;
-    var s = [1]f32{0} ** 48; // stack
+    var s: [48]f32 = @splat(0); // stack
     var sp: u32 = 0; // stack pointer
     var subr_buf: [10]Buf = undefined;
     var subr_stack: std.ArrayList(Buf) = .initBuffer(&subr_buf);
