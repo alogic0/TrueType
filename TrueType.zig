@@ -1313,7 +1313,7 @@ fn fillActiveEdges(scanline: []f32, scanline_fill: []f32, len: u32, start_edge: 
             if (x0 < @as(f32, @floatFromInt(len))) {
                 if (x0 >= 0) {
                     handleClippedEdge(scanline, @intFromFloat(x0), e, x0, y_top, x0, y_bottom);
-                    handleClippedEdge(scanline_fill, @intFromFloat(x0 + 1), e, x0, y_top, x0, y_bottom);
+                    handleClippedEdge(scanline_fill, @as(u32, @intFromFloat(x0)) + 1, e, x0, y_top, x0, y_bottom);
                 } else {
                     handleClippedEdge(scanline_fill, 0, e, x0, y_top, x0, y_bottom);
                 }
