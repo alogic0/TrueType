@@ -1785,9 +1785,9 @@ const Buf = struct {
 
     pub fn cffGetIndex(b: *Buf) Buf {
         const start = b.cursor;
-        const count = b.get16();
+        const count: u32 = b.get16();
         if (count != 0) {
-            const offsize = b.get8();
+            const offsize: u32 = b.get8();
             assert(offsize >= 1 and offsize <= 4);
             b.skip(offsize * count);
 
@@ -1799,8 +1799,8 @@ const Buf = struct {
     pub fn cffIndexGet(b_const: Buf, glyph: GlyphIndex) Buf {
         var b = b_const;
         b.seek(0);
-        const count = b.get16();
-        const offsize = b.get8();
+        const count: u32 = b.get16();
+        const offsize: u32 = b.get8();
         const i: u32 = @intFromEnum(glyph);
         assert(i < count);
         assert(offsize >= 1 and offsize <= 4);
