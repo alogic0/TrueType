@@ -14,21 +14,26 @@ const TrueType = @import("TrueType.zig");
 const ttf = try TrueType.load(@embedFile("GoNotoCurrent-Regular.ttf"));
 const example_string = "こんにちは!";
 const scale = ttf.scaleForPixelHeight(20);
-const stdout = std.io.getStdOut().writer();
-var buffer: std.ArrayListUnmanaged(u8) = .empty;
-defer buffer.deinit(gpa);
+
+var stdout_buffer: [1024]u8 = undefined;
+var stdout = std.Io.File.stdout().writer(init.io, &stdout_buffer);
+defer stdout.flush() catch {};
+
+var glyph_buffer: std.ArrayListUnmanaged(u8) = .empty;
+defer glyph_buffer.deinit(init.gpa);
 var it = std.unicode.Utf8View.initComptime(example_string).iterator();
 while (it.nextCodepoint()) |codepoint| {
-    if (ttf.codepointGlyphIndex(codepoint)) |glyph| {
+    const glyph = ttf.codepointGlyphIndex(codepoint);
+    if (glyph != .notdef) {
         std.log.debug("0x{d}: {d}", .{ codepoint, glyph });
-        buffer.clearRetainingCapacity();
-        const dims = try ttf.glyphBitmap(gpa, &buffer, glyph, scale, scale);
-        const pixels = buffer.items;
+        glyph_buffer.clearRetainingCapacity();
+        const dims = try ttf.glyphBitmap(gpa, &glyph_buffer, glyph, scale, scale);
+        const pixels = glyph_buffer.items;
         for (0..dims.height) |j| {
             for (0..dims.width) |i| {
-                try stdout.writeByte(" .:ioVM@"[pixels[j * dims.width + i] >> 5]);
+                try stdout.interface.writeByte(" .:ioVM@"[pixels[j * dims.width + i] >> 5]);
             }
-            try stdout.writeByte('\n');
+            try stdout.interface.writeByte('\n');
         }
     } else {
         std.log.debug("0x{d}: none", .{codepoint});
