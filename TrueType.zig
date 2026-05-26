@@ -427,12 +427,19 @@ fn glyphKernAdvanceGpos(tt: *const TrueType, a: GlyphIndex, b: GlyphIndex) i16 {
         const lookup_type = readInt(u16, bytes[lookup_table..][0..2], .big);
         const sub_table_count = readInt(u16, bytes[lookup_table + 4 ..][0..2], .big);
         const sub_table_offsets = lookup_table + 6;
-        if (lookup_type != 2) // Pair Adjustment Positioning Subtable
+        if (lookup_type != 2 and lookup_type != 9) // Pair Adjustment Positioning Subtable or Positioning Subtable Extension Subtable
             continue;
 
         for (0..sub_table_count) |sti| {
             const subtable_offset = readInt(u16, bytes[sub_table_offsets + 2 * sti ..][0..2], .big);
-            const table = lookup_table + subtable_offset;
+            var table = lookup_table + subtable_offset;
+            if (lookup_type == 9) {
+                const format = readInt(u16, bytes[table + 0 ..][0..2], .big);
+                if (format != 1) continue;
+                const extension_lookup_type = readInt(u16, bytes[table + 2 ..][0..2], .big);
+                if (extension_lookup_type != 2) continue;
+                table += readInt(u32, bytes[table + 4 ..][0..4], .big);
+            }
             const pos_format = readInt(u16, bytes[table..][0..2], .big);
             const coverage_offset = readInt(u16, bytes[table + 2 ..][0..2], .big);
             const coverage_index = coverageIndex(bytes, table + coverage_offset, a) orelse continue;
