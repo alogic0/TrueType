@@ -11,7 +11,7 @@ const TrueType = @This();
 const build_options = @import("build_options");
 const debug_todo = build_options.debug_todo or builtin.is_test;
 
-table_offsets: [@typeInfo(TableId).@"enum".fields.len]u32,
+table_offsets: [@typeInfo(TableId).@"enum".field_names.len]u32,
 ttf_bytes: []const u8,
 index_map: u32,
 index_to_loc_format: u16,
@@ -56,7 +56,7 @@ const MicrosoftEncodingId = enum(u16) {
 
 pub fn load(bytes: []const u8) !TrueType {
     // Find tables.
-    var table_offsets: [@typeInfo(TableId).@"enum".fields.len]u32 = @splat(0);
+    var table_offsets: [@typeInfo(TableId).@"enum".field_names.len]u32 = @splat(0);
     const tables_len = readInt(u16, bytes[4..][0..2], .big);
     var cff: u32 = 0;
     for (0..tables_len) |i| {
