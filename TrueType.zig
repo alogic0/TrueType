@@ -1639,6 +1639,9 @@ fn glyphClass(bytes: []const u8, class_def_table: u32, glyph: GlyphIndex) u32 {
             const class_range_count = readInt(u16, bytes[class_def_table + 2 ..][0..2], .big);
             const class_range_records = class_def_table + 4;
 
+            if (class_range_count == 0)
+                return 0;
+
             // Binary search.
             var l: u32 = 0;
             var r: u32 = class_range_count - 1;
