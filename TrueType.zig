@@ -260,7 +260,6 @@ pub const GlyphBitmap = struct {
 
 pub const GlyphBitmapError = error{
     OutOfMemory,
-    GlyphNotFound,
     Unimplemented,
     RMoveToStack,
     VMoveToStack,
@@ -585,9 +584,9 @@ pub fn glyphShape(tt: *const TrueType, gpa: Allocator, glyph: GlyphIndex) GlyphB
         tt.glyphShapeTT(gpa, glyph);
 }
 
-fn glyphShapeTT(tt: *const TrueType, gpa: Allocator, glyph: GlyphIndex) GlyphBitmapError![]Vertex {
+fn glyphShapeTT(tt: *const TrueType, gpa: Allocator, glyph: GlyphIndex) ![]Vertex {
     const bytes = tt.ttf_bytes;
-    const g = try glyfOffset(tt, glyph);
+    const g = glyfOffset(tt, glyph) orelse return &.{};
     var vertices: ArrayList(Vertex) = .empty;
     defer vertices.deinit(gpa);
     const n_contours_signed = readInt(i16, bytes[g..][0..2], .big);
@@ -804,7 +803,7 @@ fn glyphShapeTT(tt: *const TrueType, gpa: Allocator, glyph: GlyphIndex) GlyphBit
     return vertices.toOwnedSlice(gpa);
 }
 
-fn glyfOffset(tt: *const TrueType, glyph: GlyphIndex) error{GlyphNotFound}!u32 {
+fn glyfOffset(tt: *const TrueType, glyph: GlyphIndex) ?u32 {
     const bytes = tt.ttf_bytes;
     const glyph_index: usize = @intFromEnum(glyph);
 
@@ -820,7 +819,7 @@ fn glyfOffset(tt: *const TrueType, glyph: GlyphIndex) error{GlyphNotFound}!u32 {
         glyf + readInt(u32, bytes[loca + glyph_index * 4 ..][0..4], .big),
         glyf + readInt(u32, bytes[loca + glyph_index * 4 + 4 ..][0..4], .big),
     };
-    if (g1 == g2) return error.GlyphNotFound;
+    if (g1 == g2) return null;
     return g1;
 }
 
@@ -829,6 +828,14 @@ pub const BitmapBox = struct {
     y0: i32,
     x1: i32,
     y1: i32,
+
+    /// e.g. space character
+    pub const empty: BitmapBox = .{
+        .x0 = 0,
+        .y0 = 0,
+        .x1 = 0,
+        .y1 = 0,
+    };
 };
 
 pub fn glyphBitmapBoxSubpixel(
@@ -839,9 +846,7 @@ pub fn glyphBitmapBoxSubpixel(
     shift_x: f32,
     shift_y: f32,
 ) BitmapBox {
-    const box = glyphBox(tt, glyph) catch |err| switch (err) {
-        error.GlyphNotFound => return .{ .x0 = 0, .y0 = 0, .x1 = 0, .y1 = 0 }, // e.g. space character
-    };
+    const box = glyphBox(tt, glyph) orelse return .empty;
     return .{
         // move to integral bboxes (treating pixels as little squares, what pixels get touched)?
         .x0 = @intFromFloat(@floor(@as(f32, @floatFromInt(box.x0)) * scale_x + shift_x)),
@@ -860,16 +865,16 @@ pub fn glyphBitmapBox(
     return glyphBitmapBoxSubpixel(tt, glyph, scale_x, scale_y, 0, 0);
 }
 
-pub fn glyphBox(tt: *const TrueType, glyph: GlyphIndex) error{GlyphNotFound}!BitmapBox {
+pub fn glyphBox(tt: *const TrueType, glyph: GlyphIndex) ?BitmapBox {
     return if (tt.cff_data.cff.size != 0)
         tt.glyphBoxT2(glyph)
     else
         tt.glyphBoxTT(glyph);
 }
 
-fn glyphBoxTT(tt: *const TrueType, glyph: GlyphIndex) error{GlyphNotFound}!BitmapBox {
+fn glyphBoxTT(tt: *const TrueType, glyph: GlyphIndex) ?BitmapBox {
     const bytes = tt.ttf_bytes;
-    const g = try glyfOffset(tt, glyph);
+    const g = glyfOffset(tt, glyph) orelse return null;
     return .{
         .x0 = readInt(i16, bytes[g + 2 ..][0..2], .big),
         .y0 = readInt(i16, bytes[g + 4 ..][0..2], .big),
@@ -2035,9 +2040,9 @@ pub const CharstringCtx = struct {
     }
 };
 
-fn glyphBoxT2(tt: *const TrueType, glyph: GlyphIndex) error{GlyphNotFound}!BitmapBox {
+fn glyphBoxT2(tt: *const TrueType, glyph: GlyphIndex) ?BitmapBox {
     var ctx = CharstringCtx.init(.{ .mode = .bounds }, undefined);
-    runCharstring(&tt.cff_data, glyph, &ctx) catch return .{ .x0 = 0, .y0 = 0, .x1 = 0, .y1 = 0 };
+    runCharstring(&tt.cff_data, glyph, &ctx) catch return null;
 
     return .{
         .x0 = ctx.min_x,

@@ -24,19 +24,15 @@ defer glyph_buffer.deinit(init.gpa);
 var it = std.unicode.Utf8View.initComptime(example_string).iterator();
 while (it.nextCodepoint()) |codepoint| {
     const glyph = ttf.codepointGlyphIndex(codepoint);
-    if (glyph != .notdef) {
-        std.log.debug("0x{d}: {d}", .{ codepoint, glyph });
-        glyph_buffer.clearRetainingCapacity();
-        const dims = try ttf.glyphBitmap(gpa, &glyph_buffer, glyph, scale, scale);
-        const pixels = glyph_buffer.items;
-        for (0..dims.height) |j| {
-            for (0..dims.width) |i| {
-                try stdout.interface.writeByte(" .:ioVM@"[pixels[j * dims.width + i] >> 5]);
-            }
-            try stdout.interface.writeByte('\n');
+    std.log.debug("0x{x}: {d}", .{ codepoint, glyph });
+    glyph_buffer.clearRetainingCapacity();
+    const dims = try ttf.glyphBitmap(gpa, &glyph_buffer, glyph, scale, scale);
+    const pixels = glyph_buffer.items;
+    for (0..dims.height) |j| {
+        for (0..dims.width) |i| {
+            try stdout.interface.writeByte(" .:ioVM@"[pixels[j * dims.width + i] >> 5]);
         }
-    } else {
-        std.log.debug("0x{d}: none", .{codepoint});
+        try stdout.interface.writeByte('\n');
     }
 }
 ```

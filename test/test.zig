@@ -153,10 +153,6 @@ fn testBitmapRendering(ttf_data: []const u8) !void {
         defer c.stbtt_FreeBitmap(stb_pixels, null);
 
         const dims = ttf.glyphBitmap(gpa, &buffer, @enumFromInt(glyph_index), scale, scale) catch |err| switch (err) {
-            error.GlyphNotFound => {
-                try expect(stb_pixels == null);
-                continue;
-            },
             else => |e| return e,
         };
 
