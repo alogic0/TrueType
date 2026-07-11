@@ -1,0 +1,4 @@
+test/stb_truetype.c linguist-vendored
+test/stb_truetype.h linguist-vendored
+test/GoNotoCurrent-Regular.ttf linguist-vendored
+test/StandardSymbolsPS.otf linguist-vendored
