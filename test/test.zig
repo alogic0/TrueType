@@ -126,6 +126,74 @@ test "glyph kern advance" {
     }
 }
 
+const KernPair = struct { left: u16, right: u16, value: i16 };
+
+/// Returns a font containing only a 'kern' table with a single horizontal
+/// format 0 subtable. Neither test font has a 'kern' table (they use GPOS
+/// or nothing), so this is how glyphKernAdvance's 'kern' path gets tested.
+fn writeKernOnlyFont(w: *std.Io.Writer, pairs: []const KernPair) error{WriteFailed}!TrueType {
+    const kern_offset = 4;
+    // A table offset of 0 means "no table", so don't put it at the start.
+    try w.splatByteAll(0, kern_offset);
+    // 'kern' table header
+    try w.writeInt(u16, 0, .big); // version
+    try w.writeInt(u16, 1, .big); // nTables
+    // subtable header
+    try w.writeInt(u16, 0, .big); // version
+    try w.writeInt(u16, @intCast(14 + 6 * pairs.len), .big); // length
+    try w.writeInt(u16, 1, .big); // coverage: horizontal
+    try w.writeInt(u16, @intCast(pairs.len), .big); // nPairs
+    try w.writeInt(u16, 0, .big); // searchRange (unused)
+    try w.writeInt(u16, 0, .big); // entrySelector (unused)
+    try w.writeInt(u16, 0, .big); // rangeShift (unused)
+    // pairs, sorted by (left, right)
+    for (pairs) |pair| {
+        try w.writeInt(u16, pair.left, .big);
+        try w.writeInt(u16, pair.right, .big);
+        try w.writeInt(i16, pair.value, .big);
+    }
+
+    var ttf: TrueType = .{
+        .table_offsets = @splat(0),
+        .ttf_bytes = w.buffered(),
+        .index_map = 0,
+        .index_to_loc_format = 0,
+        .glyphs_len = 0,
+        .cff_data = .empty,
+    };
+    ttf.table_offsets[@backingInt(TrueType.TableId.kern)] = kern_offset;
+    return ttf;
+}
+
+fn kernAdvance(ttf: *const TrueType, left: u16, right: u16) i16 {
+    return ttf.glyphKernAdvance(@fromBackingInt(@intCast(left)), @fromBackingInt(@intCast(right)));
+}
+
+test "kern table lookup" {
+    {
+        var ttf_buf: [64]u8 = undefined;
+        var w: std.Io.Writer = .fixed(&ttf_buf);
+        const ttf = try writeKernOnlyFont(&w, &.{});
+        try expectEqual(0, kernAdvance(&ttf, 5, 7));
+    }
+
+    {
+        var ttf_buf: [64]u8 = undefined;
+        var w: std.Io.Writer = .fixed(&ttf_buf);
+        const ttf = try writeKernOnlyFont(&w, &.{
+            .{ .left = 5, .right = 7, .value = -3 },
+            .{ .left = 9, .right = 2, .value = 4 },
+            .{ .left = 9, .right = 300, .value = -10 },
+        });
+        try expectEqual(-3, kernAdvance(&ttf, 5, 7));
+        try expectEqual(4, kernAdvance(&ttf, 9, 2));
+        try expectEqual(-10, kernAdvance(&ttf, 9, 300));
+        try expectEqual(0, kernAdvance(&ttf, 9, 3)); // between pairs
+        try expectEqual(0, kernAdvance(&ttf, 0xffff, 0xffff)); // after the last pair
+        try expectEqual(0, kernAdvance(&ttf, 0, 0)); // before the first pair
+    }
+}
+
 fn testBitmapRendering(ttf_data: []const u8) !void {
     const gpa = std.testing.allocator;
 
