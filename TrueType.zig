@@ -534,13 +534,17 @@ fn glyphKernAdvanceKern(tt: *const TrueType, a: GlyphIndex, b: GlyphIndex) i16 {
     if (readInt(u16, bytes[kern + 8 ..][0..2], .big) != 1) // horizontal flag must be set in format
         return 0;
 
+    const pair_count = readInt(u16, bytes[kern + 10 ..][0..2], .big);
+    if (pair_count == 0) return 0;
+
     var l: u32 = 0;
-    var r: u32 = readInt(u16, bytes[kern + 10 ..][0..2], .big) - 1;
-    const needle: u32 = @as(u32, @intFromEnum(a)) << 16 | @as(u32, @intFromEnum(b));
+    var r: u32 = pair_count - 1;
+    const needle: u32 = @as(u32, @backingInt(a)) << 16 | @as(u32, @backingInt(b));
     while (l <= r) {
         const m: u32 = (l + r) >> 1;
         const straw: u32 = readInt(u32, bytes[kern + 18 + (m * 6) ..][0..4], .big); // note: unaligned read
         if (needle < straw) {
+            if (m == 0) break;
             r = m - 1;
         } else if (needle > straw) {
             l = m + 1;
