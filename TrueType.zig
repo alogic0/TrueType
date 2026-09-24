@@ -86,27 +86,27 @@ pub fn load(bytes: []const u8) LoadError!TrueType {
             },
             else => continue,
         };
-        table_offsets[@intFromEnum(id)] = readInt(u32, bytes[loc + 8 ..][0..4], .big);
+        table_offsets[@backingInt(id)] = readInt(u32, bytes[loc + 8 ..][0..4], .big);
     }
 
-    if (table_offsets[@intFromEnum(TableId.cmap)] == 0) return error.MissingRequiredTable;
-    if (table_offsets[@intFromEnum(TableId.head)] == 0) return error.MissingRequiredTable;
-    if (table_offsets[@intFromEnum(TableId.hhea)] == 0) return error.MissingRequiredTable;
-    if (table_offsets[@intFromEnum(TableId.hmtx)] == 0) return error.MissingRequiredTable;
+    if (table_offsets[@backingInt(TableId.cmap)] == 0) return error.MissingRequiredTable;
+    if (table_offsets[@backingInt(TableId.head)] == 0) return error.MissingRequiredTable;
+    if (table_offsets[@backingInt(TableId.hhea)] == 0) return error.MissingRequiredTable;
+    if (table_offsets[@backingInt(TableId.hmtx)] == 0) return error.MissingRequiredTable;
 
     var cff_data: CffData = .empty;
 
-    if (table_offsets[@intFromEnum(TableId.glyf)] != 0) {
-        if (table_offsets[@intFromEnum(TableId.loca)] == 0) return error.MissingRequiredTable;
+    if (table_offsets[@backingInt(TableId.glyf)] != 0) {
+        if (table_offsets[@backingInt(TableId.loca)] == 0) return error.MissingRequiredTable;
     } else {
         if (cff == 0) return error.MissingRequiredTable;
         cff_data = try .init(cff, bytes.ptr);
     }
 
-    const maxp = table_offsets[@intFromEnum(TableId.maxp)];
+    const maxp = table_offsets[@backingInt(TableId.maxp)];
     const glyphs_len = if (maxp == 0) 0xffff else readInt(u16, bytes[maxp + 4 ..][0..2], .big);
 
-    const cmap = table_offsets[@intFromEnum(TableId.cmap)];
+    const cmap = table_offsets[@backingInt(TableId.cmap)];
     const cmap_tables_len = readInt(u16, bytes[cmap + 2 ..][0..2], .big);
     const index_map = im: {
         var i = cmap_tables_len;
@@ -116,15 +116,15 @@ pub fn load(bytes: []const u8) LoadError!TrueType {
             const encoding_record = cmap + 4 + 8 * i;
             const platform_id = readInt(u16, bytes[encoding_record..][0..2], .big);
             switch (platform_id) {
-                @intFromEnum(PlatformId.microsoft) => switch (readInt(u16, bytes[encoding_record + 2 ..][0..2], .big)) {
-                    @intFromEnum(MicrosoftEncodingId.unicode_bmp),
-                    @intFromEnum(MicrosoftEncodingId.unicode_full),
+                @backingInt(PlatformId.microsoft) => switch (readInt(u16, bytes[encoding_record + 2 ..][0..2], .big)) {
+                    @backingInt(MicrosoftEncodingId.unicode_bmp),
+                    @backingInt(MicrosoftEncodingId.unicode_full),
                     => {
                         break :im cmap + readInt(u32, bytes[encoding_record + 4 ..][0..4], .big);
                     },
                     else => continue,
                 },
-                @intFromEnum(PlatformId.unicode) => {
+                @backingInt(PlatformId.unicode) => {
                     break :im cmap + readInt(u32, bytes[encoding_record + 4 ..][0..4], .big);
                 },
                 else => continue,
@@ -132,7 +132,7 @@ pub fn load(bytes: []const u8) LoadError!TrueType {
         }
     };
 
-    const head = table_offsets[@intFromEnum(TableId.head)];
+    const head = table_offsets[@backingInt(TableId.head)];
     const index_to_loc_format = readInt(u16, bytes[head + 50 ..][0..2], .big);
 
     return .{
@@ -153,11 +153,12 @@ pub fn codepointGlyphIndex(tt: *const TrueType, codepoint: u21) GlyphIndex {
         0 => {
             const n = readInt(u16, bytes[index_map + 2 ..][0..2], .big);
             if (codepoint < n - 6)
-                return @enumFromInt(bytes[index_map + 6 + codepoint]);
+                return @fromBackingInt(@intCast(bytes[index_map + 6 + codepoint]));
 
             return .notdef;
         },
         2 => {
+            // https://codeberg.org/andrewrk/TrueType/issues/46
             if (debug_todo) @panic("TODO implement high-byte mapping for japanese/chinese/korean");
             return .notdef;
         },
@@ -201,16 +202,16 @@ pub fn codepointGlyphIndex(tt: *const TrueType, codepoint: u21) GlyphIndex {
             if (offset == 0) {
                 const result = @as(i32, codepoint) + readInt(i16, bytes[index_map + 14 + seg_count * 4 + 2 + 2 * item ..][0..2], .big);
                 // truncate to u16
-                return @enumFromInt(@as(u16, @truncate(@as(u32, @bitCast(result)))));
+                return @fromBackingInt(@intCast(@as(u16, @truncate(@as(u32, @bitCast(result))))));
             }
 
-            return @enumFromInt(readInt(u16, bytes[offset + (codepoint - start) * 2 + index_map + 14 + seg_count * 6 + 2 + 2 * item ..][0..2], .big));
+            return @fromBackingInt(@intCast(readInt(u16, bytes[offset + (codepoint - start) * 2 + index_map + 14 + seg_count * 6 + 2 + 2 * item ..][0..2], .big)));
         },
         6 => {
             const first = readInt(u16, bytes[index_map + 6 ..][0..2], .big);
             const count = readInt(u16, bytes[index_map + 8 ..][0..2], .big);
             if (codepoint >= first and codepoint < first + count)
-                return @enumFromInt(readInt(u16, bytes[index_map + 10 + (codepoint - first) * 2 ..][0..2], .big));
+                return @fromBackingInt(@intCast(readInt(u16, bytes[index_map + 10 + (codepoint - first) * 2 ..][0..2], .big)));
 
             return .notdef;
         },
@@ -230,12 +231,13 @@ pub fn codepointGlyphIndex(tt: *const TrueType, codepoint: u21) GlyphIndex {
                     low = mid + 1;
                 } else {
                     const start_glyph = readInt(u32, bytes[off + 8 ..][0..4], .big);
-                    return @enumFromInt(start_glyph + if (format == 12) codepoint - start_char else 0);
+                    return @fromBackingInt(@intCast(start_glyph + if (format == 12) codepoint - start_char else 0));
                 }
             }
             return .notdef;
         },
         else => {
+            // https://codeberg.org/andrewrk/TrueType/issues/47
             if (debug_todo) @panic("TODO implement glyphIndex for more formats");
             return .notdef;
         },
@@ -373,7 +375,7 @@ pub const VerticalMetrics = struct {
 /// which are typically then multiplied by the scale factor for a given font size.
 pub fn verticalMetrics(tt: *const TrueType) VerticalMetrics {
     const bytes = tt.ttf_bytes;
-    const hhea = tt.table_offsets[@intFromEnum(TableId.hhea)];
+    const hhea = tt.table_offsets[@backingInt(TableId.hhea)];
     return .{
         .ascent = readInt(i16, bytes[hhea + 4 ..][0..2], .big),
         .descent = readInt(i16, bytes[hhea + 6 ..][0..2], .big),
@@ -391,10 +393,10 @@ pub const HMetrics = struct {
 };
 
 pub fn glyphHMetrics(tt: *const TrueType, glyph: GlyphIndex) HMetrics {
-    const glyph_index: usize = @intFromEnum(glyph);
+    const glyph_index: usize = @backingInt(glyph);
     const bytes = tt.ttf_bytes;
-    const hhea = tt.table_offsets[@intFromEnum(TableId.hhea)];
-    const hmtx = tt.table_offsets[@intFromEnum(TableId.hmtx)];
+    const hhea = tt.table_offsets[@backingInt(TableId.hhea)];
+    const hmtx = tt.table_offsets[@backingInt(TableId.hmtx)];
     const n_long_h_metrics = readInt(u16, bytes[hhea + 34 ..][0..2], .big);
     if (glyph_index < n_long_h_metrics) return .{
         .advance_width = readInt(i16, bytes[hmtx + 4 * glyph_index ..][0..2], .big),
@@ -409,16 +411,16 @@ pub fn glyphHMetrics(tt: *const TrueType, glyph: GlyphIndex) HMetrics {
 /// An additional amount to advance the horizontal coordinate between the two
 /// provided glyphs.
 pub fn glyphKernAdvance(tt: *const TrueType, a: GlyphIndex, b: GlyphIndex) i16 {
-    const gpos = tt.table_offsets[@intFromEnum(TableId.GPOS)];
+    const gpos = tt.table_offsets[@backingInt(TableId.GPOS)];
     if (gpos > 0) return glyphKernAdvanceGpos(tt, a, b);
-    const kern = tt.table_offsets[@intFromEnum(TableId.kern)];
+    const kern = tt.table_offsets[@backingInt(TableId.kern)];
     if (kern > 0) return glyphKernAdvanceKern(tt, a, b);
     return 0;
 }
 
 fn glyphKernAdvanceGpos(tt: *const TrueType, a: GlyphIndex, b: GlyphIndex) i16 {
     const bytes = tt.ttf_bytes;
-    const gpos = tt.table_offsets[@intFromEnum(TableId.GPOS)];
+    const gpos = tt.table_offsets[@backingInt(TableId.GPOS)];
     assert(gpos > 0);
 
     if (readInt(u16, bytes[gpos + 0 ..][0..2], .big) != 1) return 0; // Major version 1
@@ -466,7 +468,7 @@ fn glyphKernAdvanceGpos(tt: *const TrueType, a: GlyphIndex, b: GlyphIndex) i16 {
 
                         if (coverage_index >= pair_set_count) return 0;
 
-                        const needle = @intFromEnum(b);
+                        const needle = @backingInt(b);
                         var r: u32 = pair_value_count - 1;
                         var l: u32 = 0;
 
@@ -486,6 +488,7 @@ fn glyphKernAdvanceGpos(tt: *const TrueType, a: GlyphIndex, b: GlyphIndex) i16 {
                             }
                         }
                     } else {
+                        // https://codeberg.org/andrewrk/TrueType/issues/48
                         if (debug_todo) @panic("TODO implement more glyphKernAdvanceGpos");
                         return 0;
                     }
@@ -509,11 +512,13 @@ fn glyphKernAdvanceGpos(tt: *const TrueType, a: GlyphIndex, b: GlyphIndex) i16 {
                         const class2_records = class1_records + 2 * (glyph1class * class2_count);
                         return readInt(i16, bytes[class2_records + 2 * glyph2class ..][0..2], .big);
                     } else {
+                        // https://codeberg.org/andrewrk/TrueType/issues/48
                         if (debug_todo) @panic("TODO implement more glyphKernAdvanceGpos");
                         return 0;
                     }
                 },
                 else => {
+                    // https://codeberg.org/andrewrk/TrueType/issues/48
                     if (debug_todo) @panic("TODO implement more glyphKernAdvanceGpos");
                     return 0;
                 },
@@ -526,7 +531,7 @@ fn glyphKernAdvanceGpos(tt: *const TrueType, a: GlyphIndex, b: GlyphIndex) i16 {
 
 fn glyphKernAdvanceKern(tt: *const TrueType, a: GlyphIndex, b: GlyphIndex) i16 {
     const bytes = tt.ttf_bytes;
-    const kern = tt.table_offsets[@intFromEnum(TableId.kern)];
+    const kern = tt.table_offsets[@backingInt(TableId.kern)];
     assert(kern > 0);
     // we only look at the first table. it must be 'horizontal' and format 0.
     if (readInt(u16, bytes[kern + 2 ..][0..2], .big) < 1) // number of tables, need at least 1
@@ -631,14 +636,14 @@ fn glyphShapeTT(tt: *const TrueType, gpa: Allocator, glyph: GlyphIndex) ![]Verte
                 } else {
                     flagcount -= 1;
                 }
-                vertices.items[off + i].type = @enumFromInt(flags);
+                vertices.items[off + i].type = @fromBackingInt(@intCast(flags));
             }
         }
 
         // now load x coordinates
         var x: i32 = 0;
         for (0..n) |i| {
-            const flags = @intFromEnum(vertices.items[off + i].type);
+            const flags = @backingInt(vertices.items[off + i].type);
             if ((flags & 2) != 0) {
                 const dx: i16 = bytes[points];
                 points += 1;
@@ -655,7 +660,7 @@ fn glyphShapeTT(tt: *const TrueType, gpa: Allocator, glyph: GlyphIndex) ![]Verte
         // now load y coordinates
         var y: i32 = 0;
         for (0..n) |i| {
-            const flags = @intFromEnum(vertices.items[off + i].type);
+            const flags = @backingInt(vertices.items[off + i].type);
             if ((flags & 4) != 0) {
                 const dy: i16 = bytes[points];
                 points += 1;
@@ -682,7 +687,7 @@ fn glyphShapeTT(tt: *const TrueType, gpa: Allocator, glyph: GlyphIndex) ![]Verte
         var start_off: bool = false;
         var was_off: bool = false;
         while (i < n) : (i += 1) {
-            const flags = @intFromEnum(vertices.items[off + i].type);
+            const flags = @backingInt(vertices.items[off + i].type);
             x = @intCast(vertices.items[off + i].x);
             y = @intCast(vertices.items[off + i].y);
 
@@ -697,7 +702,7 @@ fn glyphShapeTT(tt: *const TrueType, gpa: Allocator, glyph: GlyphIndex) ![]Verte
                     // where we can start, and we need to save some state for when we wraparound.
                     scx = x;
                     scy = y;
-                    if ((@intFromEnum(vertices.items[off + i + 1].type) & 1) == 0) {
+                    if ((@backingInt(vertices.items[off + i + 1].type) & 1) == 0) {
                         // next point is also a curve point, so interpolate an on-point curve
                         sx = (x + vertices.items[off + i + 1].x) >> 1;
                         sy = (y + vertices.items[off + i + 1].y) >> 1;
@@ -746,7 +751,7 @@ fn glyphShapeTT(tt: *const TrueType, gpa: Allocator, glyph: GlyphIndex) ![]Verte
             var mtx: [6]f32 = .{ 1, 0, 0, 1, 0, 0 };
 
             const flags = readCursor(u16, bytes, &comp);
-            const gidx: GlyphIndex = @enumFromInt(readCursor(u16, bytes, &comp));
+            const gidx: GlyphIndex = @fromBackingInt(@intCast(readCursor(u16, bytes, &comp)));
 
             if ((flags & 2) != 0) { // XY values
                 if ((flags & 1) != 0) { // shorts
@@ -757,6 +762,7 @@ fn glyphShapeTT(tt: *const TrueType, gpa: Allocator, glyph: GlyphIndex) ![]Verte
                     mtx[5] = @floatFromInt(readCursor(i8, bytes, &comp));
                 }
             } else {
+                // https://codeberg.org/andrewrk/TrueType/issues/49
                 if (debug_todo) @panic("TODO handle matching point");
             }
             if ((flags & (1 << 3)) != 0) { // WE_HAVE_A_SCALE
@@ -809,13 +815,13 @@ fn glyphShapeTT(tt: *const TrueType, gpa: Allocator, glyph: GlyphIndex) ![]Verte
 
 fn glyfOffset(tt: *const TrueType, glyph: GlyphIndex) ?u32 {
     const bytes = tt.ttf_bytes;
-    const glyph_index: usize = @intFromEnum(glyph);
+    const glyph_index: usize = @backingInt(glyph);
 
     assert(glyph_index < tt.glyphs_len);
     assert(tt.index_to_loc_format < 2);
 
-    const glyf = tt.table_offsets[@intFromEnum(TableId.glyf)];
-    const loca = tt.table_offsets[@intFromEnum(TableId.loca)];
+    const glyf = tt.table_offsets[@backingInt(TableId.glyf)];
+    const loca = tt.table_offsets[@backingInt(TableId.loca)];
     const g1, const g2 = if (tt.index_to_loc_format == 0) .{
         glyf + @as(u32, readInt(u16, bytes[loca + glyph_index * 2 ..][0..2], .big)) * 2,
         glyf + @as(u32, readInt(u16, bytes[loca + glyph_index * 2 + 2 ..][0..2], .big)) * 2,
@@ -1603,7 +1609,7 @@ fn coverageIndex(bytes: []const u8, coverage_table: u32, glyph: GlyphIndex) ?u32
             // Binary search.
             var l: u32 = 0;
             var r: u32 = glyph_count - 1;
-            const needle = @intFromEnum(glyph);
+            const needle = @backingInt(glyph);
             while (l <= r) {
                 const glyph_array = coverage_table + 4;
                 const m = (l + r) >> 1;
@@ -1626,7 +1632,7 @@ fn coverageIndex(bytes: []const u8, coverage_table: u32, glyph: GlyphIndex) ?u32
             // Binary search.
             var l: u32 = 0;
             var r: u32 = range_count - 1;
-            const needle = @intFromEnum(glyph);
+            const needle = @backingInt(glyph);
             while (l <= r) {
                 const m = (l + r) >> 1;
                 const range_record = range_array + 6 * m;
@@ -1649,7 +1655,7 @@ fn coverageIndex(bytes: []const u8, coverage_table: u32, glyph: GlyphIndex) ?u32
 }
 
 fn glyphClass(bytes: []const u8, class_def_table: u32, glyph: GlyphIndex) u32 {
-    const glyph_int = @intFromEnum(glyph);
+    const glyph_int = @backingInt(glyph);
     const class_def_format = readInt(u16, bytes[class_def_table..][0..2], .big);
     switch (class_def_format) {
         1 => {
@@ -1726,15 +1732,17 @@ const CffData = struct {
     pub fn init(cff_offset: u32, bytes: [*]const u8) InitError!CffData {
         var result: CffData = .empty;
         // TODO this should use size from table (not 512MB)
+        // https://codeberg.org/andrewrk/TrueType/issues/50
         result.cff = .init(bytes + cff_offset, 512 * 1024 * 1024);
         var b = result.cff;
         // read the header
         b.skip(2);
         b.seek(b.get8());
         // TODO the name INDEX could list multiple fonts, but we just use the first one.
+        // https://codeberg.org/andrewrk/TrueType/issues/51
         _ = b.cffGetIndex(); // name INDEX
         var topdictidx = b.cffGetIndex();
-        var topdict = topdictidx.cffIndexGet(@enumFromInt(0));
+        var topdict = topdictidx.cffIndexGet(@fromBackingInt(@intCast(0)));
         _ = b.cffGetIndex(); // string INDEX
         result.gsubrs = b.cffGetIndex();
 
@@ -1833,7 +1841,7 @@ const Buf = struct {
         b.seek(0);
         const count: u32 = b.get16();
         const offsize: u32 = b.get8();
-        const i: u32 = @intFromEnum(glyph);
+        const i: u32 = @backingInt(glyph);
         assert(i < count);
         assert(offsize >= 1 and offsize <= 4);
         b.skip(i * offsize);
@@ -1931,7 +1939,7 @@ const Buf = struct {
         else
             107;
         if (n >= count) return .empty;
-        return idx.cffIndexGet(@enumFromInt(n));
+        return idx.cffIndexGet(@fromBackingInt(@intCast(n)));
     }
 };
 
@@ -2106,7 +2114,7 @@ const Instruction = enum(u8) {
     flex1 = 0x25,
 
     pub fn asInt(i: Instruction) u16 {
-        return @intFromEnum(i);
+        return @backingInt(i);
     }
 };
 
@@ -2389,7 +2397,7 @@ fn getGlyphSubrs(cff_data: *const CffData, glyph: GlyphIndex) Buf {
     const fmt = fdselect.get8();
     if (fmt == 0) {
         // untested
-        fdselect.skip(@intFromEnum(glyph));
+        fdselect.skip(@backingInt(glyph));
         fdselector = fdselect.get8();
     } else if (fmt == 3) {
         const nranges = fdselect.get16();
@@ -2397,7 +2405,7 @@ fn getGlyphSubrs(cff_data: *const CffData, glyph: GlyphIndex) Buf {
         for (0..nranges) |_| {
             const v = fdselect.get8();
             const end = fdselect.get16();
-            const glyph_int = @intFromEnum(glyph);
+            const glyph_int = @backingInt(glyph);
             if (glyph_int >= start and glyph_int < end) {
                 fdselector = v;
                 break;
@@ -2407,7 +2415,7 @@ fn getGlyphSubrs(cff_data: *const CffData, glyph: GlyphIndex) Buf {
     }
     // what was this line? it does nothing. why was it in the original c code?
     // if (fdselector == -1) new_buf(NULL, 0);
-    return cff_data.cff.getSubrs(cff_data.fontdicts.cffIndexGet(@enumFromInt(fdselector)));
+    return cff_data.cff.getSubrs(cff_data.fontdicts.cffIndexGet(@fromBackingInt(@intCast(fdselector))));
 }
 
 // ---

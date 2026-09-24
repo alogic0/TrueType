@@ -25,13 +25,13 @@ fn testIndexLookup(ttf_data: []const u8) !void {
     var stb_font: c.stbtt_fontinfo = undefined;
     try expect(c.stbtt_InitFont(&stb_font, ttf_data.ptr, 0) != 0);
 
-    try expectEqualInts(stb_font.loca, ttf.table_offsets[@intFromEnum(TrueType.TableId.loca)]);
-    try expectEqualInts(stb_font.head, ttf.table_offsets[@intFromEnum(TrueType.TableId.head)]);
-    try expectEqualInts(stb_font.glyf, ttf.table_offsets[@intFromEnum(TrueType.TableId.glyf)]);
-    try expectEqualInts(stb_font.hhea, ttf.table_offsets[@intFromEnum(TrueType.TableId.hhea)]);
-    try expectEqualInts(stb_font.hmtx, ttf.table_offsets[@intFromEnum(TrueType.TableId.hmtx)]);
-    try expectEqualInts(stb_font.kern, ttf.table_offsets[@intFromEnum(TrueType.TableId.kern)]);
-    try expectEqualInts(stb_font.gpos, ttf.table_offsets[@intFromEnum(TrueType.TableId.GPOS)]);
+    try expectEqualInts(stb_font.loca, ttf.table_offsets[@backingInt(TrueType.TableId.loca)]);
+    try expectEqualInts(stb_font.head, ttf.table_offsets[@backingInt(TrueType.TableId.head)]);
+    try expectEqualInts(stb_font.glyf, ttf.table_offsets[@backingInt(TrueType.TableId.glyf)]);
+    try expectEqualInts(stb_font.hhea, ttf.table_offsets[@backingInt(TrueType.TableId.hhea)]);
+    try expectEqualInts(stb_font.hmtx, ttf.table_offsets[@backingInt(TrueType.TableId.hmtx)]);
+    try expectEqualInts(stb_font.kern, ttf.table_offsets[@backingInt(TrueType.TableId.kern)]);
+    try expectEqualInts(stb_font.gpos, ttf.table_offsets[@backingInt(TrueType.TableId.GPOS)]);
 
     {
         var stb_ascent: c_int = undefined;
@@ -49,7 +49,7 @@ fn testIndexLookup(ttf_data: []const u8) !void {
     try expectEqualInts(stb_font.index_map, ttf.index_map);
 
     for (0..max_codepoint) |codepoint| {
-        const zig_answer = @intFromEnum(ttf.codepointGlyphIndex(@intCast(codepoint)));
+        const zig_answer = @backingInt(ttf.codepointGlyphIndex(@intCast(codepoint)));
         const stb_answer = c.stbtt_FindGlyphIndex(&stb_font, @intCast(codepoint));
         try expectEqualInts(stb_answer, zig_answer);
     }
@@ -73,7 +73,7 @@ fn testHMetrics(ttf_data: []const u8) !void {
 
     for (0..ttf.glyphs_len) |glyph_index| {
         //std.debug.print("glyph_index={d}/{d}\n", .{ glyph_index, ttf.glyphs_len });
-        const zig_answer = ttf.glyphHMetrics(@enumFromInt(glyph_index));
+        const zig_answer = ttf.glyphHMetrics(@fromBackingInt(@intCast(glyph_index)));
 
         var stb_advance_width: c_int = undefined;
         var stb_left_side_bearing: c_int = undefined;
@@ -111,7 +111,7 @@ fn testKernAdvance(ttf_data: []const u8) !void {
         const b = rng.uintLessThan(u32, ttf.glyphs_len);
         //if (b == 0) std.debug.print("glyph_index={d}/{d}\n", .{ a * ttf.glyphs_len + b, ttf.glyphs_len * ttf.glyphs_len });
         const stb_answer = c.stbtt_GetGlyphKernAdvance(&stb_font, @intCast(a), @intCast(b));
-        const zig_answer = ttf.glyphKernAdvance(@enumFromInt(a), @enumFromInt(b));
+        const zig_answer = ttf.glyphKernAdvance(@fromBackingInt(@intCast(a)), @fromBackingInt(@intCast(b)));
         try expectEqual(stb_answer, zig_answer);
     }
 }
@@ -220,7 +220,7 @@ fn testBitmapRendering(ttf_data: []const u8) !void {
         const stb_pixels = c.stbtt_GetGlyphBitmap(&stb_font, scale, scale, @intCast(glyph_index), &stb_width, &stb_height, &stb_xoff, &stb_yoff);
         defer c.stbtt_FreeBitmap(stb_pixels, null);
 
-        const dims = ttf.glyphBitmap(gpa, &buffer, @enumFromInt(glyph_index), scale, scale) catch |err| switch (err) {
+        const dims = ttf.glyphBitmap(gpa, &buffer, @fromBackingInt(@intCast(glyph_index)), scale, scale) catch |err| switch (err) {
             else => |e| return e,
         };
 
