@@ -212,8 +212,9 @@ input/work limits, and reproducing individual failures.
 
 ## Validation
 
-The exact tested compiler is pinned in [.zigversion](.zigversion). Run
-`ZIG=/path/to/zig sh scripts/check.sh` for tests, fuzz smoke checks, examples,
+The exact tested compiler is pinned in [.zigversion](.zigversion). Make sure
+`zig` on your `PATH` matches that version, then run `sh scripts/check.sh`
+for tests, fuzz smoke checks, examples,
 manifest-only downstream consumption, and cross-compilation. See
 [docs/VALIDATION.md](docs/VALIDATION.md) for CI activation and reference scope.
 

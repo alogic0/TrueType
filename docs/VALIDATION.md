@@ -3,13 +3,18 @@
 The exact tested compiler is pinned in `.zigversion`; the manifest minimum is a
 separate downstream compatibility constraint. On Linux x86_64,
 `scripts/install-zig.sh` downloads the pin and verifies SHA-256. Other hosts can
-install that same version themselves.
+install that same version themselves. Local commands use the system `zig` from
+`PATH`; `zig version` should match `.zigversion`.
 
 ```sh
-ZIG=/path/to/zig sh scripts/check.sh
-ZIG=/path/to/zig sh scripts/fuzz-long.sh
-ZIG=/path/to/zig python3 scripts/check-package.py
+zig version
+sh scripts/check.sh
+sh scripts/fuzz-long.sh
+python3 scripts/check-package.py
 ```
+
+The scripts also accept an optional `ZIG` environment override. CI uses that
+override to select its downloaded compiler inside the container.
 
 The check script runs formatting, Debug and ReleaseSafe tests, bounded fuzz seed
 and mutation checks, example builds, and an isolated consumer assembled solely
