@@ -331,16 +331,16 @@ Performance work may continue after release when no correctness issue remains.
 
 ### C1 — Automation and portability [M]
 
-- [ ] Pin a tested Zig toolchain in CI. Keep the manifest's minimum version
+- [x] Pin a tested Zig toolchain in CI. Keep the manifest's minimum version
   distinct from an exact supported development-build pin.
-- [ ] Run formatting, Debug tests, ReleaseSafe tests, and short deterministic
+- [x] Run formatting, Debug tests, ReleaseSafe tests, and short deterministic
   malformed-input/fuzz-replay checks on each change.
-- [ ] Add longer fuzz campaigns as scheduled or manually invoked jobs.
+- [x] Add longer fuzz campaigns as scheduled or manually invoked jobs.
 - [ ] Test Linux, macOS, and Windows where runners are available; include x86_64
   and aarch64 coverage. Report cross-compilation separately from runtime tests.
 - [ ] Record benchmark artifacts on a stable runner. Use timing thresholds only
   after normal variance is understood; enforce exact allocation invariants in tests.
-- [ ] Verify that a downstream package can import the library and build examples
+- [x] Verify that a downstream package can import the library and build examples
   using only the files included in the package manifest.
 
 ### C2 — API, documentation, and packaging [M]
@@ -648,3 +648,18 @@ and the next unresolved dependency.
   Validation: six focused fixed-buffer/CFF tests plus the rasterizer discovery
   test passed in Debug and ReleaseSafe; the example compiled in both modes and
   ran against the bundled CFF font.
+
+- C1 automation/package slice: added an exact compiler pin, SHA-256-verified
+  Linux bootstrap, portable local checks, explicit long-fuzz commands, and
+  Codeberg/Woodpecker configuration. The manifest-only consumer exposed a real
+  packaging failure: the production rasterizer imported an omitted test file.
+  Moved test discovery to a separate root; isolated import/run and packaged
+  example builds now succeed. Hosted activation, non-Linux runtime runners, and
+  a stable benchmark artifact destination remain external release prerequisites.
+
+  Validation: the complete local check script passed: 66 tests in both Debug and
+  ReleaseSafe, five fuzz/seed tests, 2,000 deterministic mutations, manifest-only
+  consumer execution, packaged example build, and example cross-compilation for
+  aarch64 Linux, x86_64 Windows, and aarch64 macOS. Shell syntax and YAML parsing
+  passed. The pinned archive URL returned HTTP 200 and its checksum matches the
+  installed compiler archive. Remote CI has not been activated or run.

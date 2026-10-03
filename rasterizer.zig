@@ -748,7 +748,3 @@ fn handleClippedEdge(
         scanline[x] += e.direction * (y1 - y0) * (1 - ((x0 - xf) + (x1 - xf)) / 2);
     }
 }
-
-test {
-    _ = @import("test/rasterizer.zig");
-}

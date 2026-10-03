@@ -1,0 +1,17 @@
+when:
+  - event: [push, pull_request, manual, cron]
+
+steps:
+  - name: check
+    image: debian:bookworm-slim
+    commands:
+      - apt-get update
+      - apt-get install -y --no-install-recommends ca-certificates curl xz-utils python3
+      - sh scripts/install-zig.sh
+      - ZIG=".toolchain/zig-x86_64-linux-$(cat .zigversion)/zig" sh scripts/check.sh
+  - name: extended-fuzz
+    image: debian:bookworm-slim
+    commands:
+      - ZIG=".toolchain/zig-x86_64-linux-$(cat .zigversion)/zig" sh scripts/fuzz-long.sh
+    when:
+      - event: [manual, cron]

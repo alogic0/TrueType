@@ -198,6 +198,13 @@ Run `zig build fuzz fuzz-replay` for seed checks and a short deterministic
 mutation campaign. See [fuzz/README.md](fuzz/README.md) for separate native targets,
 input/work limits, and reproducing individual failures.
 
+## Validation
+
+The exact tested compiler is pinned in [.zigversion](.zigversion). Run
+`ZIG=/path/to/zig sh scripts/check.sh` for tests, fuzz smoke checks, examples,
+manifest-only downstream consumption, and cross-compilation. See
+[docs/VALIDATION.md](docs/VALIDATION.md) for CI activation and reference scope.
+
 ## Roadmap
 
 See [PLAN.md](PLAN.md) for the implementation sequence, commit-sized slices,
