@@ -52,3 +52,14 @@ CFF decoding is a substantial contributor for Symbols, particularly its complex
 glyphs. Rendering currently interprets CFF for shape counting, shape emission,
 and again for bounds; reusing bounds from the counting pass is a concrete next
 experiment. No caching or typed-buffer redesign is justified by these results.
+
+## CFF bounds reuse experiment
+
+`workloads-cff-bounds.csv` repeats the same workload and settings after returning
+bounds together with the CFF outline. Bitmap checksums and every allocation,
+peak-memory, retained-memory, and output-capacity column match the baseline.
+Symbols medians improved 11.2–14.7% for one-shot rendering and 11.6–12.5% for
+workspace rendering across the four workloads. Noto medians changed -3.6% to
++2.1%, consistent with local run variation; its decoding path is unchanged.
+This supports retaining this specific removal of a redundant CFF interpretation
+pass. It does not establish a general speedup for workspaces or other fonts.

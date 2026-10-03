@@ -437,6 +437,12 @@ pub fn glyphShape(cff_data: *const CffData, gpa: Allocator, glyph: GlyphIndex) G
 }
 
 pub fn glyphShapeWithLimits(cff_data: *const CffData, gpa: Allocator, glyph: GlyphIndex, limits: Limits) GlyphShapeError![]Vertex {
+    return (try glyphShapeAndBox(cff_data, gpa, glyph, limits)).vertices;
+}
+
+pub const ShapeAndBox = struct { vertices: []Vertex, box: BitmapBox };
+
+pub fn glyphShapeAndBox(cff_data: *const CffData, gpa: Allocator, glyph: GlyphIndex, limits: Limits) GlyphShapeError!ShapeAndBox {
     // mode=bounds to get bounds and num_vertices
     var count_ctx = CharstringCtx.init(.{ .mode = .bounds }, undefined);
     count_ctx.limits = limits;
@@ -448,12 +454,10 @@ pub fn glyphShapeWithLimits(cff_data: *const CffData, gpa: Allocator, glyph: Gly
     out_ctx.limits = limits;
     try runCharstring(cff_data, glyph, &out_ctx);
     assert(out_ctx.num_vertices == count_ctx.num_vertices);
-    // std.log.debug(
-    //     "glyphShapeT2() first {d:.1},{d:.1} xy {d:.1},{d:.1} min {d:.1},{d:.1} max {d:.1},{d:.1} num_vertices {}",
-    //     .{ count_ctx.first_x, count_ctx.first_y, count_ctx.x, count_ctx.y, count_ctx.min_x, count_ctx.min_y, count_ctx.max_x, count_ctx.max_y, count_ctx.num_vertices },
-    // );
-
-    return out_ctx.vertices[0..out_ctx.num_vertices];
+    return .{
+        .vertices = out_ctx.vertices[0..out_ctx.num_vertices],
+        .box = .{ .x0 = count_ctx.min_x, .y0 = count_ctx.min_y, .x1 = count_ctx.max_x, .y1 = count_ctx.max_y },
+    };
 }
 
 const Instruction = enum(u8) {

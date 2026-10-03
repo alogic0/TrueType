@@ -314,9 +314,9 @@ advertised modes. “Heap-free” must name the mode and storage assumptions.
   the dominant costs. Keep profiling instrumentation outside published timings.
 - [x] Record median and spread, compiler/build settings, allocator, CPU, glyph
   selection, output equivalence, and retained/peak requested memory.
-- [ ] Optimize one measured bottleneck per commit, then compare against the saved
+- [x] Optimize one measured bottleneck per commit, then compare against the saved
   baseline under the same workload and build settings.
-- [ ] Evaluate typed reusable buffers, fewer passes, or contour caching only when
+- [x] Evaluate typed reusable buffers, fewer passes, or contour caching only when
   profiles support them. Define cache keys, ownership, bounds, and invalidation
   before adding any cache; avoid hidden process-wide caches.
 
@@ -687,3 +687,12 @@ and the next unresolved dependency.
   Validation: eleven targeted rendering/allocation/rasterizer tests passed in
   Debug and ReleaseSafe. Both the original benchmark and the new workload/stage
   benchmark completed with their bitmap equivalence and allocation checks.
+
+- B2 CFF optimization: bitmap rendering now reuses bounds from the CFF counting
+  pass instead of interpreting a third time. The repeated workload benchmark
+  retained identical output hashes and allocation/memory statistics, with
+  Symbols median reductions of roughly 11–15%; Noto changes stayed within local
+  variation. No persistent cache or ownership change was introduced. All 69
+  tests passed in Debug and ReleaseSafe, including numeric, bitmap-reference,
+  allocation-failure, and workspace tests. Recorded before/after CSVs and method
+  are in `benchmarks/WORKLOADS.md`.

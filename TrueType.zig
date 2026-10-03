@@ -242,11 +242,16 @@ fn glyphBitmapSubpixelInner(
     shift_y: f32,
 ) GlyphBitmapError!GlyphBitmap {
     try validateRenderParameters(scale_x, scale_y, shift_x, shift_y);
-    const vertices = try glyphShape(tt, scratch, glyph);
+    var outline_box: ?BitmapBox = null;
+    const vertices = if (tt.cff_data.cff.size != 0) blk: {
+        const shape = try cff.glyphShapeAndBox(&tt.cff_data, scratch, glyph, tt.limits);
+        outline_box = shape.box;
+        break :blk shape.vertices;
+    } else try glyphShape(tt, scratch, glyph);
     defer scratch.free(vertices);
     if (vertices.len == 0) return .empty;
-
-    const box = try glyphBitmapBoxSubpixelChecked(tt, glyph, scale_x, scale_y, shift_x, shift_y);
+    const unscaled = outline_box orelse (try tt.glyphBoxChecked(glyph) orelse return .empty);
+    const box = try scaledBox(unscaled, scale_x, scale_y, shift_x, shift_y);
     const wide_w = @as(i64, box.x1) - box.x0;
     const wide_h = @as(i64, box.y1) - box.y0;
     if (wide_w < 0 or wide_h < 0 or wide_w > 65535 or wide_h > 65535 or
@@ -377,6 +382,10 @@ pub fn glyphBitmapBoxSubpixelChecked(
 ) GlyphBitmapError!BitmapBox {
     try validateRenderParameters(scale_x, scale_y, shift_x, shift_y);
     const box = try tt.glyphBoxChecked(glyph) orelse return .empty;
+    return scaledBox(box, scale_x, scale_y, shift_x, shift_y);
+}
+
+fn scaledBox(box: BitmapBox, scale_x: f32, scale_y: f32, shift_x: f32, shift_y: f32) error{BitmapTooLarge}!BitmapBox {
     return .{
         .x0 = try pixelCoordinate(@floor(@as(f32, @floatFromInt(box.x0)) * scale_x + shift_x)),
         .y0 = try pixelCoordinate(@floor(@as(f32, @floatFromInt(-box.y1)) * scale_y + shift_y)),
