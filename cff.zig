@@ -11,6 +11,7 @@ pub const ParseError = error{ TruncatedCffData, InvalidCffData };
 
 pub const GlyphShapeError = ParseError || error{
     OutOfMemory,
+    CoordinateOutOfRange,
     Unimplemented,
     RMoveToStack,
     VMoveToStack,
@@ -288,10 +289,10 @@ const Buf = struct {
 };
 
 pub const CharstringCtx = struct {
-    first_x: f32,
-    first_y: f32,
-    x: f32,
-    y: f32,
+    first_x: f64,
+    first_y: f64,
+    x: f64,
+    y: f64,
     min_x: i32,
     min_y: i32,
     max_x: i32,
@@ -339,7 +340,21 @@ pub const CharstringCtx = struct {
         ctx.flags.started = true;
     }
 
-    fn v(ctx: *CharstringCtx, ty: Vertex.Type, x: i32, y: i32, cx: i32, cy: i32, cx1: i32, cy1: i32) !void {
+    fn coordinate(value: f64) error{CoordinateOutOfRange}!i16 {
+        const integer = @trunc(value);
+        if (!std.math.isFinite(integer) or integer < -32768 or integer > 32767)
+            return error.CoordinateOutOfRange;
+        return @intFromFloat(integer);
+    }
+
+    fn v(ctx: *CharstringCtx, ty: Vertex.Type, x_value: f64, y_value: f64, cx_value: f64, cy_value: f64, cx1_value: f64, cy1_value: f64) !void {
+        // Validate in both passes; bounds must describe the same integer outline.
+        const x = try coordinate(x_value);
+        const y = try coordinate(y_value);
+        const cx = try coordinate(cx_value);
+        const cy = try coordinate(cy_value);
+        const cx1 = try coordinate(cx1_value);
+        const cy1 = try coordinate(cy1_value);
         if (ctx.flags.mode == .bounds) {
             trackVertex(ctx, x, y);
             if (ty == .vcubic) {
@@ -356,27 +371,27 @@ pub const CharstringCtx = struct {
 
     fn closeShape(ctx: *CharstringCtx) !void {
         if (ctx.first_x != ctx.x or ctx.first_y != ctx.y)
-            try ctx.v(.vline, @intFromFloat(ctx.first_x), @intFromFloat(ctx.first_y), 0, 0, 0, 0);
+            try ctx.v(.vline, ctx.first_x, ctx.first_y, 0, 0, 0, 0);
     }
 
-    fn rmoveTo(ctx: *CharstringCtx, dx: f32, dy: f32) !void {
+    fn rmoveTo(ctx: *CharstringCtx, dx: f64, dy: f64) !void {
         try ctx.closeShape();
         ctx.first_x = ctx.x + dx;
         ctx.x = ctx.first_x;
         ctx.first_y = ctx.y + dy;
         ctx.y = ctx.first_y;
         // std.log.debug("moveTo {d:.1},{d:.1}", .{ ctx.x, ctx.y });
-        try ctx.v(.vmove, @intFromFloat(ctx.x), @intFromFloat(ctx.y), 0, 0, 0, 0);
+        try ctx.v(.vmove, ctx.x, ctx.y, 0, 0, 0, 0);
     }
 
-    fn rlineTo(ctx: *CharstringCtx, dx: f32, dy: f32) !void {
+    fn rlineTo(ctx: *CharstringCtx, dx: f64, dy: f64) !void {
         ctx.x += dx;
         ctx.y += dy;
         // std.log.debug("lineTo {d:.1},{d:.1}", .{ ctx.x, ctx.y });
-        try ctx.v(.vline, @intFromFloat(ctx.x), @intFromFloat(ctx.y), 0, 0, 0, 0);
+        try ctx.v(.vline, ctx.x, ctx.y, 0, 0, 0, 0);
     }
 
-    fn rccurveTo(ctx: *CharstringCtx, dx1: f32, dy1: f32, dx2: f32, dy2: f32, dx3: f32, dy3: f32) !void {
+    fn rccurveTo(ctx: *CharstringCtx, dx1: f64, dy1: f64, dx2: f64, dy2: f64, dx3: f64, dy3: f64) !void {
         const cx1 = ctx.x + dx1;
         const cy1 = ctx.y + dy1;
         const cx2 = cx1 + dx2;
@@ -386,12 +401,12 @@ pub const CharstringCtx = struct {
         // std.log.debug("curveTo {d:.1},{d:.1} {d:.1},{d:.1} {d:.1},{d:.1}", .{ ctx.x, ctx.y, cx1, cy1, cx2, cy2 });
         try ctx.v(
             .vcubic,
-            @intFromFloat(ctx.x),
-            @intFromFloat(ctx.y),
-            @intFromFloat(cx1),
-            @intFromFloat(cy1),
-            @intFromFloat(cx2),
-            @intFromFloat(cy2),
+            ctx.x,
+            ctx.y,
+            cx1,
+            cy1,
+            cx2,
+            cy2,
         );
     }
 };
@@ -467,7 +482,7 @@ fn runCharstring(cff_data: *const CffData, glyph: GlyphIndex, ctx: *CharstringCt
     var in_header = true;
     var has_subrs = false;
     var clear_stack = false;
-    var s: [48]f32 = @splat(0); // stack
+    var s: [48]f64 = @splat(0); // stack
     var sp: u32 = 0; // stack pointer
     var subr_buf: [10]Buf = undefined;
     var subr_stack: std.ArrayList(Buf) = .initBuffer(&subr_buf);
@@ -591,7 +606,7 @@ fn runCharstring(cff_data: *const CffData, glyph: GlyphIndex, ctx: *CharstringCt
             Instruction.hhcurveto.asInt(), // 0x1B
             => {
                 if (sp < 4) return error.CurveToStack;
-                var f: f32 = 0.0;
+                var f: f64 = 0.0;
                 if (sp & 1 != 0) {
                     f = s[i];
                     i += 1;
@@ -714,8 +729,8 @@ fn runCharstring(cff_data: *const CffData, glyph: GlyphIndex, ctx: *CharstringCt
                     return error.ReservedOperator;
 
                 // push immediate
-                const f: f32 = if (b0 == 255)
-                    @floatFromInt(@as(i32, @intCast((try b.get32()) / 0x10000)))
+                const f: f64 = if (b0 == 255)
+                    @as(f64, @floatFromInt(@as(i32, @bitCast(try b.get32())))) / 65536.0
                 else blk: {
                     b.cursor -= 1;
                     break :blk @floatFromInt(@as(i16, @truncate(@as(i32, @bitCast(try b.cffInt())))));

@@ -123,3 +123,73 @@ test "CFF bundled font tolerates every truncation boundary" {
         _ = CffData.init(bytes[0..length]) catch continue;
     }
 }
+
+pub fn programFont(storage: []u8, program: []const u8) !TrueType {
+    @memcpy(storage[0..21], minimal[0..21]);
+    @memcpy(storage[21..26], &[_]u8{ 0, 1, 2, 0, 1 });
+    std.mem.writeInt(u16, storage[26..28], @intCast(program.len + 1), .big);
+    @memcpy(storage[28..][0..program.len], program);
+    return .{
+        .table_offsets = @splat(0),
+        .ttf_bytes = storage[0 .. 28 + program.len],
+        .index_map = 0,
+        .index_to_loc_format = 0,
+        .glyphs_len = 1,
+        .cff_data = try CffData.init(storage[0 .. 28 + program.len]),
+    };
+}
+
+fn fixed(w: *std.Io.Writer, value: i32) !void {
+    try w.writeByte(255);
+    try w.writeInt(i32, value, .big);
+}
+
+test "CFF fixed operands preserve signed fractions and accumulated deltas" {
+    var program: [128]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&program);
+    try fixed(&w, -98304); // -1.5
+    try fixed(&w, 98304); // 1.5
+    try w.writeByte(21);
+    for (0..2) |_| {
+        try fixed(&w, 32768); // +0.5
+        try fixed(&w, -32768); // -0.5
+        try w.writeByte(5);
+    }
+    try w.writeByte(14);
+    var storage: [256]u8 = undefined;
+    const tt = try programFont(&storage, w.buffered());
+    const shape = try tt.glyphShape(std.testing.allocator, @fromBackingInt(0));
+    defer std.testing.allocator.free(shape);
+    try std.testing.expectEqual(4, shape.len);
+    for (shape[0..3], [_]i16{ -1, -1, 0 }, [_]i16{ 1, 1, 0 }) |v, x, y| {
+        try std.testing.expectEqual(x, v.x);
+        try std.testing.expectEqual(y, v.y);
+    }
+}
+
+test "CFF fixed operand boundaries retain the integer vertex contract" {
+    for ([_]i32{ 0, 1, -1, 2147483647, -2147483648 }) |value| {
+        var program: [32]u8 = undefined;
+        var w: std.Io.Writer = .fixed(&program);
+        try fixed(&w, value);
+        try w.writeAll(&.{ 139, 21, 14 });
+        var storage: [128]u8 = undefined;
+        const tt = try programFont(&storage, w.buffered());
+        const shape = try tt.glyphShape(std.testing.allocator, @fromBackingInt(0));
+        defer std.testing.allocator.free(shape);
+        try std.testing.expectEqual(@as(i16, @intCast(@divTrunc(value, 65536))), shape[0].x);
+    }
+}
+
+test "CFF coordinate overflow returns an error before allocation" {
+    for ([_][]const u8{
+        &.{ 28, 0x7f, 0xff, 139, 21, 140, 139, 5, 14 },
+        &.{ 28, 0x80, 0, 139, 21, 138, 139, 5, 14 },
+        &.{ 28, 0x7f, 0xff, 139, 21, 140, 139, 138, 139, 139, 139, 8, 14 },
+    }) |program| {
+        var storage: [128]u8 = undefined;
+        const tt = try programFont(&storage, program);
+        var no_alloc: std.testing.FailingAllocator = .init(std.testing.allocator, .{ .fail_index = 0 });
+        try expectError(error.CoordinateOutOfRange, tt.glyphShape(no_alloc.allocator(), @fromBackingInt(0)));
+    }
+}

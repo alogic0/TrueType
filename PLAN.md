@@ -1,6 +1,6 @@
 # TrueType project plan
 
-Status: proposed roadmap; implementation has not started on the unchecked items.
+Status: implementation in progress; unchecked items remain pending.
 Baseline: `abc7270`, recorded 2026-10-03.
 
 ## 1. Target outcome
@@ -96,15 +96,15 @@ large enough to require several slices; it should not be forced into one commit.
 
 ### Q1 — Correct signed and fractional CFF operands [S]
 
-- [ ] Decode byte-255 operands as signed fixed-point values before converting to
+- [x] Decode byte-255 operands as signed fixed-point values before converting to
   the interpreter's numeric representation.
-- [ ] Add cases for positive and negative fractions, zero, boundary values, and
+- [x] Add cases for positive and negative fractions, zero, boundary values, and
   truncated encodings. Include repeated fractional deltas whose accumulated
   movement reaches an integer coordinate.
-- [ ] Check coordinate conversion at the outline boundary. Keep the existing
+- [x] Check coordinate conversion at the outline boundary. Keep the existing
   integer `Vertex` contract explicit; preserving fractional operands internally
   does not by itself provide fractional public vertices.
-- [ ] Reject out-of-range conversions through a defined error, or document and
+- [x] Reject out-of-range conversions through a defined error, or document and
   test the supported range before extending it.
 
 **Done when:** synthetic charstrings demonstrate correct signs and accumulated
@@ -494,8 +494,20 @@ behavior and failures; a larger number alone is not evidence of broader coverage
 7. Select D, E, or a later extension based on the next concrete rendering or
    typography requirement. Keep those releases independently usable.
 
-**Next implementation slice:** Q1, signed fixed-point CFF operand decoding.
+**Next implementation slice:** Q2, Type 2 arithmetic and stack operators.
 
 For every completed slice, append a short record here or link its commit with:
 what changed, the regression/acceptance evidence, any public behavior change,
 and the next unresolved dependency.
+
+## Implementation record
+
+- Q1: signed 16.16 operands now retain fractions in an `f64` interpreter; public
+  integer vertices still truncate toward zero. Coordinates outside the `i16`
+  vertex range return `CoordinateOutOfRange` in the counting pass. Regression
+  fixtures reproduce the previous negative-value crashes and cover fractional
+  accumulation, fixed-point extremes, and endpoint/control-point overflow.
+  `CharstringCtx` coordinate fields now use `f64`; consumers relying on that
+  implementation type should migrate to `glyphShape` and `glyphBox`.
+  Validation: 34 font/API tests passed in Debug and ReleaseSafe; the three
+  rasterizer tests remained cached and unchanged (37 tests across both roots).

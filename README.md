@@ -95,6 +95,9 @@ scales need separate measurements.
 * Codepoint to glyph lookup (cmap formats 0, 2, 4, 6, 8, 10, 12, and 13)
 * Unicode variation-sequence lookup (format 14) via `codepointVariationGlyphIndex`
 * Glyph rendering to bitmap
+* CFF fixed-point operands retain signed fractions internally; exported integer
+  outline vertices truncate toward zero. Out-of-range coordinates return
+  `CoordinateOutOfRange`.
 * Kerning
 * Font shaping and ligatures are not yet implemented.
 * Untrusted font files are not supported.
