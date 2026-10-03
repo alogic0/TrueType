@@ -265,12 +265,12 @@ with no circular ownership or newly required global state.
 
 ### A4 — Broader correctness corpus [M]
 
-- [ ] Add small synthetic fixtures for format branches, not only large fonts.
-- [ ] Expand valid-font coverage across TrueType/CFF, CID subroutines, composites,
+- [x] Add small synthetic fixtures for format branches, not only large fonts.
+- [x] Expand valid-font coverage across TrueType/CFF, CID subroutines, composites,
   supplementary mappings, empty glyphs, and placement/advance records.
-- [ ] Record font provenance, redistribution permission, and checksums. Prefer
+- [x] Record font provenance, redistribution permission, and checksums. Prefer
   compact extracted fixtures where permitted; keep large optional corpora external.
-- [ ] Retain independent geometry/area tests. Use stb comparisons only within its
+- [x] Retain independent geometry/area tests. Use stb comparisons only within its
   supported behavior and document local reference adaptations.
 - [ ] Add a second development-only rendering reference where it resolves a real
   coverage gap, with matching hinting and scale settings and justified tolerances.
@@ -345,11 +345,11 @@ Performance work may continue after release when no correctness issue remains.
 
 ### C2 — API, documentation, and packaging [M]
 
-- [ ] Publish a support matrix for containers, outline formats, cmap formats,
+- [x] Publish a support matrix for containers, outline formats, cmap formats,
   positioning, hinting, and unsupported font technologies.
 - [ ] Add compiling examples for one-shot rendering, workspace reuse, variation
   selectors, fixed-budget rendering, and error recovery.
-- [ ] Document font-byte lifetime, scratch/output ownership, thread usage,
+- [x] Document font-byte lifetime, scratch/output ownership, thread usage,
   coordinate conventions, supported inputs, limits, and error behavior.
 - [x] Audit public implementation details such as `CharstringCtx` and decide
   whether to support, deprecate, or internalize them before API stabilization.
@@ -663,3 +663,15 @@ and the next unresolved dependency.
   aarch64 Linux, x86_64 Windows, and aarch64 macOS. Shell syntax and YAML parsing
   passed. The pinned archive URL returned HTTP 200 and its checksum matches the
   installed compiler archive. Remote CI has not been activated or run.
+
+- A4/C2 corpus and support slice: added independently checked CID local-subroutine
+  selection for FDSelect 0/3 and cmap 6/12/13 boundary fixtures. Added a support /
+  test matrix, reference-adaptation notes, font hashes/provenance, and upstream
+  license notices. The existing Symbols binary matches the pinned Artifex source
+  byte-for-byte; Noto's embedded source/license metadata is recorded without
+  claiming an independently reconstructed upstream binary hash. No unresolved
+  rendering disagreement currently justifies adding another reference engine;
+  that conditional task remains deferred, with no new runtime dependency.
+  Validation: ten targeted CID/cmap tests plus test discovery passed in Debug and
+  ReleaseSafe. Manifest-only consumer execution and packaged examples passed
+  with the new documentation/license files included.

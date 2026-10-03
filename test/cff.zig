@@ -193,3 +193,36 @@ test "CFF coordinate overflow returns an error before allocation" {
         try expectError(error.CoordinateOutOfRange, tt.glyphShape(no_alloc.allocator(), @fromBackingInt(0)));
     }
 }
+
+test "CFF CID selects distinct private local subroutines for both FDSelect formats" {
+    for ([_][]const u8{ &.{ 0, 0, 1 }, &.{ 3, 0, 2, 0, 0, 0, 0, 1, 1, 0, 2 } }) |selection| {
+        var storage: [128]u8 = undefined;
+        var w: std.Io.Writer = .fixed(&storage);
+        try w.writeAll(minimal[0..10]);
+        // CharStrings at 27, FDArray at 39, FDSelect at 51.
+        try w.writeAll(&.{ 0, 1, 1, 1, 9, 166, 17, 178, 12, 36, 190, 12, 37 });
+        try w.writeAll(&.{ 0, 0, 0, 0 });
+        try w.writeAll(&.{ 0, 2, 1, 1, 4, 7, 32, 10, 14, 32, 10, 14 });
+        const private: u8 = @intCast(51 + selection.len);
+        try w.writeAll(&.{ 0, 2, 1, 1, 4, 7, 141, private + 139, 18, 141, private + 11 + 139, 18 });
+        try w.writeAll(selection);
+        for ([_]u8{ 149, 159 }) |x| try w.writeAll(&.{ 141, 19, 0, 1, 1, 1, 5, x, 139, 21, 11 });
+        const font: TrueType = .{
+            .table_offsets = @splat(0),
+            .ttf_bytes = w.buffered(),
+            .index_map = 0,
+            .index_to_loc_format = 0,
+            .glyphs_len = 2,
+            .cff_data = try CffData.init(w.buffered()),
+        };
+        for (0..2) |id| {
+            const glyph: TrueType.GlyphIndex = @fromBackingInt(@as(u16, @intCast(id)));
+            const shape = try font.glyphShape(std.testing.allocator, glyph);
+            defer std.testing.allocator.free(shape);
+            try std.testing.expectEqual(@as(usize, 1), shape.len);
+            try std.testing.expectEqual(@as(i16, @intCast(10 + 10 * id)), shape[0].x);
+            try std.testing.expectEqual(@as(i16, 0), shape[0].y);
+            try std.testing.expectEqual(@as(i32, @intCast(10 + 10 * id)), (try font.glyphBoxChecked(glyph)).?.x0);
+        }
+    }
+}

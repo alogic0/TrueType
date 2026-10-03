@@ -119,6 +119,9 @@ scales need separate measurements.
 
 ## Features and Limitations
 
+See the [support and test matrix](docs/SUPPORT.md) for exact scope and ownership
+contracts, and [test font provenance](test/FONTS.md) for development assets.
+
 * Codepoint to glyph lookup (cmap formats 0, 2, 4, 6, 8, 10, 12, and 13)
 * Unicode variation-sequence lookup (format 14) via `codepointVariationGlyphIndex`
 * `codepointGlyphIndexChecked` and `codepointVariationGlyphIndexChecked` report

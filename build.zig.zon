@@ -9,6 +9,8 @@
         "README.md",
         ".zigversion",
         "docs",
+        "test/FONTS.md",
+        "test/licenses",
         "examples",
         "PLAN.md",
         "TrueType.zig",

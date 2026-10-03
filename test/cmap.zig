@@ -227,3 +227,33 @@ test "cmap variation queries bound nested counts and offsets" {
     put(u32, uv, 6, 0xffffffff);
     try std.testing.expectError(error.EndOfStream, tt.codepointVariationGlyphIndexChecked(0x41, 0xfe0f));
 }
+
+test "cmap format 6 trimmed array preserves missing glyphs and boundaries" {
+    var bytes: [16]u8 = @splat(0);
+    put(u16, &bytes, 0, 6);
+    put(u16, &bytes, 2, bytes.len);
+    put(u16, &bytes, 6, 0x40);
+    put(u16, &bytes, 8, 3);
+    put(u16, &bytes, 10, 10);
+    put(u16, &bytes, 14, 12);
+    const tt = font(&bytes);
+    for ([_]u21{ 0x3f, 0x40, 0x41, 0x42, 0x43 }, [_]u16{ 0, 10, 0, 12, 0 }) |cp, glyph|
+        try expectEqual(glyph, mapped(tt, cp));
+}
+
+test "cmap formats 12 and 13 distinguish sequential and constant groups" {
+    for ([_]u16{ 12, 13 }) |format| {
+        var bytes: [40]u8 = @splat(0);
+        put(u16, &bytes, 0, format);
+        put(u32, &bytes, 4, bytes.len);
+        put(u32, &bytes, 12, 2);
+        for ([_]u32{ 0x10000, 0x10002, 40, 0x10fffd, 0x10ffff, 65533 }, 0..) |word, i|
+            put(u32, &bytes, 16 + 4 * i, word);
+        const tt = font(&bytes);
+        try expectEqual(0, mapped(tt, 0xffff));
+        try expectEqual(40, mapped(tt, 0x10000));
+        try expectEqual(@as(u16, if (format == 12) 42 else 40), mapped(tt, 0x10002));
+        try expectEqual(0, mapped(tt, 0x10003));
+        try expectEqual(@as(u16, if (format == 12) 65535 else 65533), mapped(tt, 0x10ffff));
+    }
+}
