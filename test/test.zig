@@ -488,4 +488,5 @@ test "CFF uses its declared table bounds" {
 
 test {
     _ = @import("composite.zig");
+    _ = @import("cmap.zig");
 }

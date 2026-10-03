@@ -39,7 +39,8 @@ while (it.nextCodepoint()) |codepoint| {
 
 ## Features and Limitations
 
-* Codepoint to glyph lookup
+* Codepoint to glyph lookup (cmap formats 0, 2, 4, 6, 8, 10, 12, and 13)
+* Unicode variation-sequence lookup (format 14) via `codepointVariationGlyphIndex`
 * Glyph rendering to bitmap
 * Kerning
 * Font shaping and ligatures are not yet implemented.

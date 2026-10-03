@@ -9,6 +9,7 @@
         "README.md",
         "TrueType.zig",
         "cff.zig",
+        "cmap.zig",
         "glyph.zig",
         "rasterizer.zig",
         "build.zig",

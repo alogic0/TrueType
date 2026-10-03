@@ -10,13 +10,13 @@ const ArrayList = std.ArrayListUnmanaged;
 const TrueType = @This();
 const rasterizer = @import("rasterizer.zig");
 const cff = @import("cff.zig");
+const cmap = @import("cmap.zig");
 const CffData = cff.CffData;
-const build_options = @import("build_options");
-const debug_todo = build_options.debug_todo or builtin.is_test;
 
 table_offsets: [@typeInfo(TableId).@"enum".field_names.len]u32,
 ttf_bytes: []const u8,
 index_map: u32,
+variation_map: u32 = 0,
 index_to_loc_format: u16,
 glyphs_len: u32,
 cff_data: CffData,
@@ -109,31 +109,32 @@ pub fn load(bytes: []const u8) LoadError!TrueType {
     const maxp = table_offsets[@backingInt(TableId.maxp)];
     const glyphs_len = if (maxp == 0) 0xffff else readInt(u16, bytes[maxp + 4 ..][0..2], .big);
 
-    const cmap = table_offsets[@backingInt(TableId.cmap)];
-    const cmap_tables_len = readInt(u16, bytes[cmap + 2 ..][0..2], .big);
-    const index_map = im: {
-        var i = cmap_tables_len;
-        while (true) {
-            i -= 1;
-            if (i == 0) return error.IndexMapMissing;
-            const encoding_record = cmap + 4 + 8 * i;
-            const platform_id = readInt(u16, bytes[encoding_record..][0..2], .big);
-            switch (platform_id) {
-                @backingInt(PlatformId.microsoft) => switch (readInt(u16, bytes[encoding_record + 2 ..][0..2], .big)) {
-                    @backingInt(MicrosoftEncodingId.unicode_bmp),
-                    @backingInt(MicrosoftEncodingId.unicode_full),
-                    => {
-                        break :im cmap + readInt(u32, bytes[encoding_record + 4 ..][0..4], .big);
-                    },
-                    else => continue,
-                },
-                @backingInt(PlatformId.unicode) => {
-                    break :im cmap + readInt(u32, bytes[encoding_record + 4 ..][0..4], .big);
-                },
-                else => continue,
-            }
+    const cmap_offset = table_offsets[@backingInt(TableId.cmap)];
+    const cmap_tables_len = readInt(u16, bytes[cmap_offset + 2 ..][0..2], .big);
+    var index_map: u32 = 0;
+    var variation_map: u32 = 0;
+    // Preserve the last suitable base map, including record zero. A variation
+    // subtable supplements the base map and must never replace it.
+    for (0..cmap_tables_len) |i| {
+        const record = cmap_offset + 4 + 8 * i;
+        const platform = readInt(u16, bytes[record..][0..2], .big);
+        const encoding = readInt(u16, bytes[record + 2 ..][0..2], .big);
+        const offset = cmap_offset + readInt(u32, bytes[record + 4 ..][0..4], .big);
+        const format = readInt(u16, bytes[offset..][0..2], .big);
+        if (platform == @backingInt(PlatformId.unicode) and encoding == 5 and format == 14) {
+            variation_map = offset;
+            continue;
         }
-    };
+        const supported_platform = platform == @backingInt(PlatformId.unicode) or
+            (platform == @backingInt(PlatformId.microsoft) and
+                (encoding == @backingInt(MicrosoftEncodingId.unicode_bmp) or encoding == @backingInt(MicrosoftEncodingId.unicode_full)));
+        if (!supported_platform) continue;
+        switch (format) {
+            0, 2, 4, 6, 8, 10, 12, 13 => index_map = offset,
+            else => {},
+        }
+    }
+    if (index_map == 0) return error.IndexMapMissing;
 
     const head = table_offsets[@backingInt(TableId.head)];
     const index_to_loc_format = readInt(u16, bytes[head + 50 ..][0..2], .big);
@@ -142,6 +143,7 @@ pub fn load(bytes: []const u8) LoadError!TrueType {
         .table_offsets = table_offsets,
         .ttf_bytes = bytes,
         .index_map = index_map,
+        .variation_map = variation_map,
         .index_to_loc_format = index_to_loc_format,
         .glyphs_len = glyphs_len,
         .cff_data = cff_data,
@@ -149,102 +151,14 @@ pub fn load(bytes: []const u8) LoadError!TrueType {
 }
 
 pub fn codepointGlyphIndex(tt: *const TrueType, codepoint: u21) GlyphIndex {
-    const bytes = tt.ttf_bytes;
-    const index_map = tt.index_map;
-    const format = readInt(u16, bytes[index_map..][0..2], .big);
-    switch (format) {
-        0 => {
-            const n = readInt(u16, bytes[index_map + 2 ..][0..2], .big);
-            if (codepoint < n - 6)
-                return @fromBackingInt(@intCast(bytes[index_map + 6 + codepoint]));
+    return cmap.glyphIndex(tt.ttf_bytes, tt.index_map, codepoint);
+}
 
-            return .notdef;
-        },
-        2 => {
-            // https://codeberg.org/andrewrk/TrueType/issues/46
-            if (debug_todo) @panic("TODO implement high-byte mapping for japanese/chinese/korean");
-            return .notdef;
-        },
-        4 => {
-            const seg_count = readInt(u16, bytes[index_map + 6 ..][0..2], .big) >> 1;
-            var search_range = readInt(u16, bytes[index_map + 8 ..][0..2], .big) >> 1;
-            var entry_selector = readInt(u16, bytes[index_map + 10 ..][0..2], .big);
-            const range_shift = readInt(u16, bytes[index_map + 12 ..][0..2], .big) >> 1;
-
-            // Do a binary search of the segments.
-            const end_count = index_map + 14;
-            var search = end_count;
-
-            if (codepoint > 0xffff)
-                return .notdef;
-
-            // They lie from end_count .. end_count + seg_count but search_range
-            // is the nearest power of two.
-            if (codepoint >= readInt(u16, bytes[search + range_shift * 2 ..][0..2], .big))
-                search += range_shift * 2;
-
-            // Now decrement to bias correctly to find smallest.
-            search -= 2;
-            while (entry_selector > 0) {
-                search_range >>= 1;
-                const end = readInt(u16, bytes[search + search_range * 2 ..][0..2], .big);
-                if (codepoint > end)
-                    search += search_range * 2;
-                entry_selector -= 1;
-            }
-            search += 2;
-
-            const item: u16 = @intCast((search - end_count) >> 1);
-
-            const start = readInt(u16, bytes[index_map + 14 + seg_count * 2 + 2 + 2 * item ..][0..2], .big);
-            const last = readInt(u16, bytes[end_count + 2 * item ..][0..2], .big);
-            if (codepoint < start or codepoint > last)
-                return .notdef;
-
-            const offset = readInt(u16, bytes[index_map + 14 + seg_count * 6 + 2 + 2 * item ..][0..2], .big);
-            if (offset == 0) {
-                const result = @as(i32, codepoint) + readInt(i16, bytes[index_map + 14 + seg_count * 4 + 2 + 2 * item ..][0..2], .big);
-                // truncate to u16
-                return @fromBackingInt(@intCast(@as(u16, @truncate(@as(u32, @bitCast(result))))));
-            }
-
-            return @fromBackingInt(@intCast(readInt(u16, bytes[offset + (codepoint - start) * 2 + index_map + 14 + seg_count * 6 + 2 + 2 * item ..][0..2], .big)));
-        },
-        6 => {
-            const first = readInt(u16, bytes[index_map + 6 ..][0..2], .big);
-            const count = readInt(u16, bytes[index_map + 8 ..][0..2], .big);
-            if (codepoint >= first and codepoint < first + count)
-                return @fromBackingInt(@intCast(readInt(u16, bytes[index_map + 10 + (codepoint - first) * 2 ..][0..2], .big)));
-
-            return .notdef;
-        },
-        12, 13 => {
-            const ngroups = readInt(u32, bytes[index_map + 12 ..][0..4], .big);
-            var low: u32 = 0;
-            var high: u32 = ngroups;
-            // Binary search the right group.
-            while (low < high) {
-                const mid = low + ((high - low) >> 1); // rounds down, so low <= mid < high
-                const off = index_map + 16 + mid * 12;
-                const start_char = readInt(u32, bytes[off..][0..4], .big);
-                const end_char = readInt(u32, bytes[off + 4 ..][0..4], .big);
-                if (codepoint < start_char) {
-                    high = mid;
-                } else if (codepoint > end_char) {
-                    low = mid + 1;
-                } else {
-                    const start_glyph = readInt(u32, bytes[off + 8 ..][0..4], .big);
-                    return @fromBackingInt(@intCast(start_glyph + if (format == 12) codepoint - start_char else 0));
-                }
-            }
-            return .notdef;
-        },
-        else => {
-            // https://codeberg.org/andrewrk/TrueType/issues/47
-            if (debug_todo) @panic("TODO implement glyphIndex for more formats");
-            return .notdef;
-        },
-    }
+/// Returns null when the font does not support this variation sequence.
+/// Default sequences use the base character map; explicit mappings may differ.
+pub fn codepointVariationGlyphIndex(tt: *const TrueType, codepoint: u21, selector: u21) ?GlyphIndex {
+    if (tt.variation_map == 0) return null;
+    return cmap.variationGlyphIndex(tt.ttf_bytes, tt.variation_map, codepoint, selector, tt.codepointGlyphIndex(codepoint));
 }
 
 pub const GlyphBitmap = struct {
