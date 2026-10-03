@@ -485,3 +485,7 @@ test "CFF uses its declared table bounds" {
     bytes[offset + 2] = 3; // header size must include the four header bytes
     try std.testing.expectError(error.UnsupportedCffData, TrueType.load(bytes));
 }
+
+test {
+    _ = @import("composite.zig");
+}

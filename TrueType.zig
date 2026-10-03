@@ -263,7 +263,7 @@ pub const GlyphBitmap = struct {
     };
 };
 
-pub const GlyphBitmapError = cff.GlyphShapeError;
+pub const GlyphBitmapError = cff.GlyphShapeError || error{InvalidCompositeGlyph};
 pub const CharstringCtx = cff.CharstringCtx;
 
 /// Caller owns returned memory.
@@ -534,7 +534,28 @@ pub fn glyphShape(tt: *const TrueType, gpa: Allocator, glyph: GlyphIndex) GlyphB
         tt.glyphShapeTT(gpa, glyph);
 }
 
-fn glyphShapeTT(tt: *const TrueType, gpa: Allocator, glyph: GlyphIndex) ![]Vertex {
+const OutlinePoint = struct {
+    x: f32,
+    y: f32,
+
+    fn transform(p: OutlinePoint, m: [6]f32) OutlinePoint {
+        return .{ .x = m[0] * p.x + m[2] * p.y + m[4], .y = m[1] * p.x + m[3] * p.y + m[5] };
+    }
+};
+
+fn glyphShapeTT(tt: *const TrueType, gpa: Allocator, glyph: GlyphIndex) GlyphBitmapError![]Vertex {
+    return glyphShapeTTInner(tt, gpa, glyph, null, 0);
+}
+
+fn glyphShapeTTInner(
+    tt: *const TrueType,
+    gpa: Allocator,
+    glyph: GlyphIndex,
+    outline_points: ?*ArrayList(OutlinePoint),
+    depth: u32,
+) GlyphBitmapError![]Vertex {
+    if (depth >= 64) return error.RecursionLimit;
+    if (@backingInt(glyph) >= tt.glyphs_len) return error.InvalidCompositeGlyph;
     const bytes = tt.ttf_bytes;
     const g = glyfOffset(tt, glyph) orelse return &.{};
     var vertices: ArrayList(Vertex) = .empty;
@@ -615,6 +636,15 @@ fn glyphShapeTT(tt: *const TrueType, gpa: Allocator, glyph: GlyphIndex) ![]Verte
             vertices.items[off + i].y = @intCast(y);
         }
 
+        // Keep the original on- and off-curve point order for composite
+        // attachments, before inserting implied points or closing contours.
+        if (outline_points) |out| {
+            const raw = try out.addManyAsSlice(gpa, n);
+            for (raw, vertices.items[off..][0..n]) |*point, vertex| {
+                point.* = .{ .x = @floatFromInt(vertex.x), .y = @floatFromInt(vertex.y) };
+            }
+        }
+
         // now convert them to our format
         var num_vertices: u32 = 0;
         var sx: i32 = 0;
@@ -685,7 +715,9 @@ fn glyphShapeTT(tt: *const TrueType, gpa: Allocator, glyph: GlyphIndex) ![]Verte
         num_vertices = closeShape(vertices.items, num_vertices, was_off, start_off, sx, sy, scx, scy, cx, cy);
         vertices.shrinkRetainingCapacity(num_vertices);
     } else if (n_contours_signed < 0) {
-        // Compound shapes.
+        // Point numbers span all previously incorporated components.
+        var parent_points: ArrayList(OutlinePoint) = .empty;
+        defer parent_points.deinit(gpa);
         var more = true;
         var comp = g + 10;
         while (more) {
@@ -694,7 +726,10 @@ fn glyphShapeTT(tt: *const TrueType, gpa: Allocator, glyph: GlyphIndex) ![]Verte
             const flags = readCursor(u16, bytes, &comp);
             const gidx: GlyphIndex = @fromBackingInt(@intCast(readCursor(u16, bytes, &comp)));
 
-            if ((flags & 2) != 0) { // XY values
+            var parent_point: u16 = 0;
+            var child_point: u16 = 0;
+            const xy_values = (flags & 2) != 0;
+            if (xy_values) { // XY values
                 if ((flags & 1) != 0) { // shorts
                     mtx[4] = @floatFromInt(readCursor(i16, bytes, &comp));
                     mtx[5] = @floatFromInt(readCursor(i16, bytes, &comp));
@@ -703,8 +738,9 @@ fn glyphShapeTT(tt: *const TrueType, gpa: Allocator, glyph: GlyphIndex) ![]Verte
                     mtx[5] = @floatFromInt(readCursor(i8, bytes, &comp));
                 }
             } else {
-                // https://codeberg.org/andrewrk/TrueType/issues/49
-                if (debug_todo) @panic("TODO handle matching point");
+                // Point indices are unsigned, unlike XY offsets.
+                parent_point = if (flags & 1 != 0) readCursor(u16, bytes, &comp) else readCursor(u8, bytes, &comp);
+                child_point = if (flags & 1 != 0) readCursor(u16, bytes, &comp) else readCursor(u8, bytes, &comp);
             }
             if ((flags & (1 << 3)) != 0) { // WE_HAVE_A_SCALE
                 mtx[0] = @as(f32, @floatFromInt(readCursor(i16, bytes, &comp))) / 16384.0;
@@ -723,33 +759,41 @@ fn glyphShapeTT(tt: *const TrueType, gpa: Allocator, glyph: GlyphIndex) ![]Verte
                 mtx[3] = @as(f32, @floatFromInt(readCursor(i16, bytes, &comp))) / 16384.0;
             }
 
-            // Find transformation scales.
-            const m: f32 = @sqrt(mtx[0] * mtx[0] + mtx[1] * mtx[1]);
-            const n: f32 = @sqrt(mtx[2] * mtx[2] + mtx[3] * mtx[3]);
-
-            // Get indexed glyph.
-            const comp_verts = try glyphShape(tt, gpa, gidx);
+            var child_points: ArrayList(OutlinePoint) = .empty;
+            defer child_points.deinit(gpa);
+            const comp_verts = try glyphShapeTTInner(tt, gpa, gidx, &child_points, depth + 1);
             defer gpa.free(comp_verts);
-            if (comp_verts.len > 0) {
-                // Transform vertices.
-                for (comp_verts) |*v| {
-                    {
-                        const x: f32 = @floatFromInt(v.x);
-                        const y: f32 = @floatFromInt(v.y);
-                        v.x = @intFromFloat(m * (mtx[0] * x + mtx[2] * y + mtx[4]));
-                        v.y = @intFromFloat(n * (mtx[1] * x + mtx[3] * y + mtx[5]));
-                    }
-                    {
-                        const x: f32 = @floatFromInt(v.cx);
-                        const y: f32 = @floatFromInt(v.cy);
-                        v.cx = @intFromFloat(m * (mtx[0] * x + mtx[2] * y + mtx[4]));
-                        v.cy = @intFromFloat(n * (mtx[1] * x + mtx[3] * y + mtx[5]));
-                    }
+
+            if (xy_values) {
+                // The default offset is in parent coordinates. Only an explicit
+                // SCALED_COMPONENT_OFFSET applies the matrix to the offset too.
+                if (flags & 0x1800 == 0x0800) {
+                    const dx = mtx[4];
+                    const dy = mtx[5];
+                    mtx[4] = mtx[0] * dx + mtx[2] * dy;
+                    mtx[5] = mtx[1] * dx + mtx[3] * dy;
                 }
-                try vertices.appendSlice(gpa, comp_verts);
+            } else {
+                if (parent_point >= parent_points.items.len or child_point >= child_points.items.len)
+                    return error.InvalidCompositeGlyph;
+                const anchor = child_points.items[child_point].transform(mtx);
+                mtx[4] = parent_points.items[parent_point].x - anchor.x;
+                mtx[5] = parent_points.items[parent_point].y - anchor.y;
             }
+
+            for (comp_verts) |*v| {
+                const end = (OutlinePoint{ .x = @floatFromInt(v.x), .y = @floatFromInt(v.y) }).transform(mtx);
+                const control = (OutlinePoint{ .x = @floatFromInt(v.cx), .y = @floatFromInt(v.cy) }).transform(mtx);
+                v.x = @intFromFloat(end.x);
+                v.y = @intFromFloat(end.y);
+                v.cx = @intFromFloat(control.x);
+                v.cy = @intFromFloat(control.y);
+            }
+            try vertices.appendSlice(gpa, comp_verts);
+            for (child_points.items) |point| try parent_points.append(gpa, point.transform(mtx));
             more = (flags & (1 << 5)) != 0;
         }
+        if (outline_points) |out| try out.appendSlice(gpa, parent_points.items);
     }
     return vertices.toOwnedSlice(gpa);
 }
