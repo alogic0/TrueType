@@ -50,4 +50,16 @@ pub fn build(b: *std.Build) void {
     const run_unit_tests = b.addRunArtifact(unit_tests);
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_unit_tests.step);
+
+    const rasterizer_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("rasterizer.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+        .use_llvm = use_llvm,
+        .use_lld = use_llvm,
+    });
+    rasterizer_tests.filters = unit_tests.filters;
+    test_step.dependOn(&b.addRunArtifact(rasterizer_tests).step);
 }

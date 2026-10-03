@@ -58,7 +58,9 @@ pub fn rasterize(
     off_y: i32,
     invert: bool,
 ) Allocator.Error!void {
-    const scale = @min(scale_x, scale_y);
+    // Bound error in both pixel axes, including unequal and reflected scales.
+    // Dividing by the smaller scale would allow visible error on the larger axis.
+    const scale = @max(@abs(scale_x), @abs(scale_y));
     var windings = try flattenCurves(gpa, vertices, flatness_in_pixels / scale);
     defer windings.deinit(gpa);
     try rasterizeInner(gpa, result, windings.points, windings.contour_lengths, scale_x, scale_y, shift_x, shift_y, off_x, off_y, invert);
@@ -239,7 +241,7 @@ fn flattenCurves(
     };
 }
 
-/// tessellate until threshold p is happy... @TODO warped to compensate for non-linear stretching
+/// Subdivide until midpoint deviation meets the object-space error bound.
 fn tesselateCurve(
     gpa: Allocator,
     points: *ArrayList(Point),
@@ -545,10 +547,10 @@ fn fillActiveEdges(scanline: []f32, scanline_fill: []f32, len: u32, start_edge: 
                     //
                     // goal is to measure the area covered by '.' in each pixel
 
-                    // if x2 is right at the right edge of x1, y_crossing can blow up, github #1057
-                    // @TODO: maybe test against sy1 rather than y_bottom?
-                    if (y_crossing > y_bottom)
-                        y_crossing = y_bottom;
+                    // Nearly vertical edges can round across a pixel boundary.
+                    // Crossings must stay inside the clipped segment, which may
+                    // end before the bottom of this scanline.
+                    y_crossing = std.math.clamp(y_crossing, sy0, sy1);
 
                     const sign: f32 = e.direction;
 
@@ -558,10 +560,12 @@ fn fillActiveEdges(scanline: []f32, scanline_fill: []f32, len: u32, start_edge: 
                     // area of the triangle (x_top,sy0), (x1+1,sy0), (x1+1,y_crossing)
                     scanline[x1] += sizedTriangleArea(area, x1p1f - x_top);
 
-                    // check if final y_crossing is blown up; no test case for this
-                    if (y_final > y_bottom) {
-                        y_final = y_bottom;
-                        dy = (y_final - y_crossing) / (x2f - x1p1f); // if denom=0, y_final = y_crossing, so y_final <= y_bottom
+                    if (y_final < y_crossing or y_final > sy1) {
+                        y_final = std.math.clamp(y_final, y_crossing, sy1);
+                        // Adjacent pixels have no intermediate step and their
+                        // crossings coincide; avoid dividing by zero there.
+                        if (x2 > x1 + 1)
+                            dy = (y_final - y_crossing) / (x2f - x1p1f);
                     }
 
                     // in second pixel, area covered by line segment found in first pixel
@@ -713,4 +717,8 @@ fn handleClippedEdge(
         // coverage = 1 - average x position
         scanline[x] += e.direction * (y1 - y0) * (1 - ((x0 - xf) + (x1 - xf)) / 2);
     }
+}
+
+test {
+    _ = @import("test/rasterizer.zig");
 }
