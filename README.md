@@ -111,7 +111,8 @@ scales need separate measurements.
   but not applied; flex curves are rendered without flex-depth adjustment.
   Deprecated `dotsection` is ignored; deprecated endchar composites return
   `UnsupportedCffSeac`, and reserved operator codes return `ReservedOperator`.
-* Kerning
+* Kerning; `glyphKernAdvanceChecked` reports malformed positioning records,
+  while `glyphKernAdvance` returns zero on errors.
 * Font shaping and ligatures are not yet implemented.
 * Font loading validates directory ranges and required metric-table sizes;
   malformed required data is rejected rather than replaced with guessed counts.

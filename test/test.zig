@@ -216,6 +216,7 @@ fn writeKernOnlyFont(w: *std.Io.Writer, pairs: []const KernPair) error{WriteFail
         .cff_data = .empty,
     };
     ttf.table_offsets[@backingInt(TrueType.TableId.kern)] = kern_offset;
+    ttf.table_lengths[@backingInt(TrueType.TableId.kern)] = @intCast(w.buffered().len - kern_offset);
     return ttf;
 }
 
@@ -271,6 +272,7 @@ fn writeGposOnlyFont(w: *std.Io.Writer, pair_words: []const u16, extension: bool
         .cff_data = .empty,
     };
     ttf.table_offsets[@backingInt(TrueType.TableId.GPOS)] = 4;
+    ttf.table_lengths[@backingInt(TrueType.TableId.GPOS)] = @intCast(w.buffered().len - 4);
     return ttf;
 }
 
@@ -494,4 +496,44 @@ test {
     _ = @import("cff.zig");
     _ = @import("type2.zig");
     _ = @import("sfnt.zig");
+}
+
+test "GPOS checked lookup bounds every accessed record and extension" {
+    for ([_]bool{ false, true }) |extension| {
+        var buffer: [128]u8 = undefined;
+        var w: std.Io.Writer = .fixed(&buffer);
+        var tt = try writeGposOnlyFont(&w, &.{ 1, 12, 4, 0, 1, 18, 1, 1, 5, 1, 7, 0xffec }, extension);
+        const full_length = tt.table_lengths[@backingInt(TrueType.TableId.GPOS)];
+        for (1..full_length) |length| {
+            tt.table_lengths[@backingInt(TrueType.TableId.GPOS)] = @intCast(length);
+            try std.testing.expectError(error.EndOfStream, tt.glyphKernAdvanceChecked(@fromBackingInt(5), @fromBackingInt(7)));
+            try expectEqual(0, kernAdvance(&tt, 5, 7));
+        }
+        tt.table_lengths[@backingInt(TrueType.TableId.GPOS)] = full_length;
+        if (extension) {
+            // Font prefix + GPOS header + LookupList header + lookup = 26.
+            std.mem.writeInt(u32, buffer[30..34], 0xffffffff, .big);
+            try std.testing.expectError(error.EndOfStream, tt.glyphKernAdvanceChecked(@fromBackingInt(5), @fromBackingInt(7)));
+        }
+    }
+    for ([_]u16{ 1, 2 }) |format| {
+        var buffer: [64]u8 = undefined;
+        var w: std.Io.Writer = .fixed(&buffer);
+        const tt = try writeGposOnlyFont(&w, &.{ 1, 12, 4, 0, 1, 16, format, 0, 0 }, false);
+        try expectEqual(0, try tt.glyphKernAdvanceChecked(@fromBackingInt(5), @fromBackingInt(7)));
+    }
+}
+
+test "kern checked lookup honors the first subtable length" {
+    var buffer: [128]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buffer);
+    var tt = try writeKernOnlyFont(&w, &.{.{ .left = 5, .right = 7, .value = -3 }});
+    const length = tt.table_lengths[@backingInt(TrueType.TableId.kern)];
+    for (1..length) |n| {
+        tt.table_lengths[@backingInt(TrueType.TableId.kern)] = @intCast(n);
+        try std.testing.expectError(error.EndOfStream, tt.glyphKernAdvanceChecked(@fromBackingInt(5), @fromBackingInt(7)));
+    }
+    tt.table_lengths[@backingInt(TrueType.TableId.kern)] = length;
+    std.mem.writeInt(u16, buffer[10..12], 14, .big); // pair lies past the declared subtable
+    try std.testing.expectError(error.EndOfStream, tt.glyphKernAdvanceChecked(@fromBackingInt(5), @fromBackingInt(7)));
 }

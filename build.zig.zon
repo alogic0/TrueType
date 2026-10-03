@@ -11,6 +11,7 @@
         "TrueType.zig",
         "reader.zig",
         "sfnt.zig",
+        "kerning.zig",
         "cff.zig",
         "type2.zig",
         "cmap.zig",

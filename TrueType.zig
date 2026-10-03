@@ -11,6 +11,7 @@ const cmap = @import("cmap.zig");
 const CffData = cff.CffData;
 const sfnt = @import("sfnt.zig");
 const Reader = @import("reader.zig");
+const kerning = @import("kerning.zig");
 
 table_offsets: [sfnt.table_count]u32,
 table_lengths: [sfnt.table_count]u32 = @splat(0),
@@ -321,144 +322,15 @@ pub fn glyphHMetrics(tt: *const TrueType, glyph: GlyphIndex) HMetrics {
 /// base X advance for the first glyph. Placement, second-glyph adjustments, and
 /// device/variation deltas are not applied.
 pub fn glyphKernAdvance(tt: *const TrueType, a: GlyphIndex, b: GlyphIndex) i16 {
-    const gpos = tt.table_offsets[@backingInt(TableId.GPOS)];
-    if (gpos > 0) return glyphKernAdvanceGpos(tt, a, b);
-    const kern = tt.table_offsets[@backingInt(TableId.kern)];
-    if (kern > 0) return glyphKernAdvanceKern(tt, a, b);
-    return 0;
+    return tt.glyphKernAdvanceChecked(a, b) catch 0;
 }
 
-fn glyphKernAdvanceGpos(tt: *const TrueType, a: GlyphIndex, b: GlyphIndex) i16 {
-    const bytes = tt.ttf_bytes;
-    const gpos = tt.table_offsets[@backingInt(TableId.GPOS)];
-    assert(gpos > 0);
-
-    if (readInt(u16, bytes[gpos + 0 ..][0..2], .big) != 1) return 0; // Major version 1
-    if (readInt(u16, bytes[gpos + 2 ..][0..2], .big) != 0) return 0; // Minor version 0
-
-    const lookup_list_offset: u16 = readInt(u16, bytes[gpos + 8 ..][0..2], .big);
-    const lookup_list = gpos + lookup_list_offset;
-    const lookup_count: u16 = readInt(u16, bytes[lookup_list..][0..2], .big);
-
-    for (0..lookup_count) |i| {
-        const lookup_offset = readInt(u16, bytes[lookup_list + 2 + 2 * i ..][0..2], .big);
-        const lookup_table = lookup_list + lookup_offset;
-
-        const lookup_type = readInt(u16, bytes[lookup_table..][0..2], .big);
-        const sub_table_count = readInt(u16, bytes[lookup_table + 4 ..][0..2], .big);
-        const sub_table_offsets = lookup_table + 6;
-        if (lookup_type != 2 and lookup_type != 9) // Pair Adjustment Positioning Subtable or Positioning Subtable Extension Subtable
-            continue;
-
-        for (0..sub_table_count) |sti| {
-            const subtable_offset = readInt(u16, bytes[sub_table_offsets + 2 * sti ..][0..2], .big);
-            var table = lookup_table + subtable_offset;
-            if (lookup_type == 9) {
-                const format = readInt(u16, bytes[table + 0 ..][0..2], .big);
-                if (format != 1) continue;
-                const extension_lookup_type = readInt(u16, bytes[table + 2 ..][0..2], .big);
-                if (extension_lookup_type != 2) continue;
-                table += readInt(u32, bytes[table + 4 ..][0..4], .big);
-            }
-            const pos_format = readInt(u16, bytes[table..][0..2], .big);
-            const coverage_offset = readInt(u16, bytes[table + 2 ..][0..2], .big);
-            const coverage_index = coverageIndex(bytes, table + coverage_offset, a) orelse continue;
-
-            // ValueRecord fields are optional, ordered by their ValueFormat bits.
-            // https://learn.microsoft.com/en-us/typography/opentype/spec/gpos#value-record
-            if (pos_format != 1 and pos_format != 2) return 0;
-            const value_format_1 = readInt(u16, bytes[table + 4 ..][0..2], .big);
-            const value_format_2 = readInt(u16, bytes[table + 6 ..][0..2], .big);
-            if ((value_format_1 | value_format_2) & 0xff00 != 0) return 0; // reserved bits
-            const value_record_pair_size: u32 = 2 * (@as(u32, @popCount(value_format_1)) + @as(u32, @popCount(value_format_2)));
-
-            switch (pos_format) {
-                1 => {
-                    const pair_set_count = readInt(u16, bytes[table + 8 ..][0..2], .big);
-                    if (coverage_index >= pair_set_count) return 0;
-                    const pair_pos_offset = readInt(u16, bytes[table + 10 + 2 * coverage_index ..][0..2], .big);
-                    const pair_value_table = table + pair_pos_offset;
-                    const pair_value_count = readInt(u16, bytes[pair_value_table..][0..2], .big);
-                    const pair_value_array = pair_value_table + 2;
-
-                    const needle = @backingInt(b);
-                    var r: u32 = pair_value_count;
-                    var l: u32 = 0;
-
-                    // Half-open bounds also handle empty pair sets.
-                    while (l < r) {
-                        const m = l + (r - l) / 2;
-                        const pair_value = pair_value_array + (2 + value_record_pair_size) * m;
-                        const second_glyph = readInt(u16, bytes[pair_value..][0..2], .big);
-                        if (needle < second_glyph) {
-                            r = m;
-                        } else if (needle > second_glyph) {
-                            l = m + 1;
-                        } else {
-                            return gposXAdvance(bytes, pair_value + 2, value_format_1);
-                        }
-                    }
-                },
-                2 => {
-                    const class_def10_offset = readInt(u16, bytes[table + 8 ..][0..2], .big);
-                    const class_def20_offset = readInt(u16, bytes[table + 10 ..][0..2], .big);
-                    const glyph1class = glyphClass(bytes, table + class_def10_offset, a);
-                    const glyph2class = glyphClass(bytes, table + class_def20_offset, b);
-
-                    const class1_count = readInt(u16, bytes[table + 12 ..][0..2], .big);
-                    const class2_count = readInt(u16, bytes[table + 14 ..][0..2], .big);
-
-                    if (glyph1class >= class1_count) return 0; // malformed
-                    if (glyph2class >= class2_count) return 0; // malformed
-
-                    const record = table + 16 + value_record_pair_size * (glyph1class * class2_count + glyph2class);
-                    return gposXAdvance(bytes, record, value_format_1);
-                },
-                else => unreachable,
-            }
-        }
-    }
-
-    return 0;
-}
-
-/// The scalar kerning API returns the first glyph's base horizontal advance.
-/// Placement, vertical advance, second-glyph adjustments, and device/variation
-/// deltas require a positioning API with additional context and are not applied.
-fn gposXAdvance(bytes: []const u8, record: u32, value_format: u16) i16 {
-    if (value_format & 0x0004 == 0) return 0;
-    const offset: u32 = 2 * @as(u32, @popCount(value_format & 0x0003));
-    return readInt(i16, bytes[record + offset ..][0..2], .big);
-}
-
-fn glyphKernAdvanceKern(tt: *const TrueType, a: GlyphIndex, b: GlyphIndex) i16 {
-    const bytes = tt.ttf_bytes;
-    const kern = tt.table_offsets[@backingInt(TableId.kern)];
-    assert(kern > 0);
-    // we only look at the first table. it must be 'horizontal' and format 0.
-    if (readInt(u16, bytes[kern + 2 ..][0..2], .big) < 1) // number of tables, need at least 1
-        return 0;
-    if (readInt(u16, bytes[kern + 8 ..][0..2], .big) != 1) // horizontal flag must be set in format
-        return 0;
-
-    const pair_count = readInt(u16, bytes[kern + 10 ..][0..2], .big);
-    if (pair_count == 0) return 0;
-
-    var l: u32 = 0;
-    var r: u32 = pair_count - 1;
-    const needle: u32 = @as(u32, @backingInt(a)) << 16 | @as(u32, @backingInt(b));
-    while (l <= r) {
-        const m: u32 = (l + r) >> 1;
-        const straw: u32 = readInt(u32, bytes[kern + 18 + (m * 6) ..][0..4], .big); // note: unaligned read
-        if (needle < straw) {
-            if (m == 0) break;
-            r = m - 1;
-        } else if (needle > straw) {
-            l = m + 1;
-        } else {
-            return readInt(i16, bytes[kern + 22 + (m * 6) ..][0..2], .big);
-        }
-    }
+/// Reports malformed positioning data. Unsupported lookup kinds contribute zero.
+pub fn glyphKernAdvanceChecked(tt: *const TrueType, a: GlyphIndex, b: GlyphIndex) Reader.Error!i16 {
+    if (tt.table_offsets[@backingInt(TableId.GPOS)] != 0 and tt.table_lengths[@backingInt(TableId.GPOS)] != 0)
+        return kerning.gpos(try tt.tableReader(.GPOS), a, b);
+    if (tt.table_offsets[@backingInt(TableId.kern)] != 0 and tt.table_lengths[@backingInt(TableId.kern)] != 0)
+        return kerning.kern(try tt.tableReader(.kern), a, b);
     return 0;
 }
 
@@ -881,102 +753,4 @@ fn readCursor(comptime I: type, bytes: []const u8, cursor: *u32) Reader.Error!I 
     const result = try (Reader{ .bytes = bytes }).read(I, start);
     cursor.* = start + @sizeOf(I);
     return result;
-}
-
-fn coverageIndex(bytes: []const u8, coverage_table: u32, glyph: GlyphIndex) ?u32 {
-    const coverage_format = readInt(u16, bytes[coverage_table..][0..2], .big);
-    switch (coverage_format) {
-        1 => {
-            const glyph_count = readInt(u16, bytes[coverage_table + 2 ..][0..2], .big);
-
-            // Binary search.
-            var l: u32 = 0;
-            var r: u32 = glyph_count - 1;
-            const needle = @backingInt(glyph);
-            while (l <= r) {
-                const glyph_array = coverage_table + 4;
-                const m = (l + r) >> 1;
-                const glyph_id = readInt(u16, bytes[glyph_array + 2 * m ..][0..2], .big);
-                const straw = glyph_id;
-                if (needle < straw) {
-                    if (m == 0) break;
-                    r = m - 1;
-                } else if (needle > straw) {
-                    l = m + 1;
-                } else {
-                    return m;
-                }
-            }
-        },
-        2 => {
-            const range_count = readInt(u16, bytes[coverage_table + 2 ..][0..2], .big);
-            const range_array = coverage_table + 4;
-
-            // Binary search.
-            var l: u32 = 0;
-            var r: u32 = range_count - 1;
-            const needle = @backingInt(glyph);
-            while (l <= r) {
-                const m = (l + r) >> 1;
-                const range_record = range_array + 6 * m;
-                const straw_start = readInt(u16, bytes[range_record..][0..2], .big);
-                const straw_end = readInt(u16, bytes[range_record + 2 ..][0..2], .big);
-                if (needle < straw_start) {
-                    if (m == 0) break;
-                    r = m - 1;
-                } else if (needle > straw_end) {
-                    l = m + 1;
-                } else {
-                    const start_coverage_index = readInt(u16, bytes[range_record + 4 ..][0..2], .big);
-                    return start_coverage_index + needle - straw_start;
-                }
-            }
-        },
-        else => {},
-    }
-    return null;
-}
-
-fn glyphClass(bytes: []const u8, class_def_table: u32, glyph: GlyphIndex) u32 {
-    const glyph_int = @backingInt(glyph);
-    const class_def_format = readInt(u16, bytes[class_def_table..][0..2], .big);
-    switch (class_def_format) {
-        1 => {
-            const start_glyph_id = readInt(u16, bytes[class_def_table + 2 ..][0..2], .big);
-            const glyph_count = readInt(u16, bytes[class_def_table + 4 ..][0..2], .big);
-            const class_def1_value_array = class_def_table + 6;
-
-            if (glyph_int >= start_glyph_id and glyph_int < start_glyph_id + glyph_count)
-                return readInt(u16, bytes[class_def1_value_array + 2 * (glyph_int - start_glyph_id) ..][0..2], .big);
-        },
-        2 => {
-            const class_range_count = readInt(u16, bytes[class_def_table + 2 ..][0..2], .big);
-            const class_range_records = class_def_table + 4;
-
-            if (class_range_count == 0)
-                return 0;
-
-            // Binary search.
-            var l: u32 = 0;
-            var r: u32 = class_range_count - 1;
-            while (l <= r) {
-                const m = (l + r) >> 1;
-                const class_range_record = class_range_records + 6 * m;
-                const straw_start = readInt(u16, bytes[class_range_record..][0..2], .big);
-                const straw_end = readInt(u16, bytes[class_range_record + 2 ..][0..2], .big);
-                if (glyph_int < straw_start) {
-                    if (m == 0) break;
-                    r = m - 1;
-                } else if (glyph_int > straw_end) {
-                    l = m + 1;
-                } else {
-                    return readInt(u16, bytes[class_range_record + 4 ..][0..2], .big);
-                }
-            }
-        },
-        else => return std.math.maxInt(u32), // Unsupported definition type, return an error.
-    }
-
-    // "All glyphs not assigned to a class fall into class 0". (OpenType spec)
-    return 0;
 }

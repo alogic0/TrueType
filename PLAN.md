@@ -157,7 +157,7 @@ defines the directory and table ranges used by this work.
   metric records, and short/long location entries.
 - [x] Bound each glyph to its own `loca` interval within `glyf`; validate contour
   endpoints, instructions, flag repeats, coordinate streams, and component data.
-- [ ] Apply the same approach to character maps, variation maps, legacy kerning,
+- [x] Apply the same approach to character maps, variation maps, legacy kerning,
   GPOS lookups, coverage tables, and class definitions.
 - [ ] Validate cross-table relationships, including CFF CharStrings counts and
   declared glyph counts, without inventing fallback values for malformed data.
@@ -575,3 +575,13 @@ and the next unresolved dependency.
   unchanged cached rasterizer tests (54 tests across both roots). A new huge-count
   regression exposed a remaining format-14 arithmetic overflow during this slice;
   the final implementation checks record extent before searching.
+
+- Q3 kerning slice: moved scalar kerning into `kerning.zig` with bounded
+  GPOS lookup/extension, pair, coverage, class, and legacy kern reads. Added
+  `glyphKernAdvanceChecked`; the convenience API retains a zero fallback.
+  Unsupported lookup kinds retain the existing skip policy. Empty coverage
+  searches use half-open intervals, and legacy pairs cannot escape their
+  declared subtable. Prefix truncations and a maximal extension offset are
+  covered by regression tests.
+  Validation: 53 font/API tests passed in Debug and ReleaseSafe, plus three
+  unchanged cached rasterizer tests (56 tests across both roots).
