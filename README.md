@@ -17,7 +17,7 @@ const scale = ttf.scaleForPixelHeight(20);
 
 var stdout_buffer: [1024]u8 = undefined;
 var stdout = std.Io.File.stdout().writer(init.io, &stdout_buffer);
-defer stdout.flush() catch {};
+defer stdout.interface.flush() catch {};
 
 var glyph_buffer: std.ArrayListUnmanaged(u8) = .empty;
 defer glyph_buffer.deinit(init.gpa);
@@ -26,7 +26,7 @@ defer workspace.deinit();
 var it = std.unicode.Utf8View.initComptime(example_string).iterator();
 while (it.nextCodepoint()) |codepoint| {
     const glyph = ttf.codepointGlyphIndex(codepoint);
-    std.log.debug("0x{x}: {d}", .{ codepoint, glyph });
+    std.log.debug("0x{x}: {d}", .{ codepoint, @backingInt(glyph) });
     glyph_buffer.clearRetainingCapacity();
     const dims = try ttf.glyphBitmapWithWorkspace(init.gpa, &glyph_buffer, &workspace, glyph, scale, scale);
     const pixels = glyph_buffer.items;
@@ -38,6 +38,11 @@ while (it.nextCodepoint()) |codepoint| {
     }
 }
 ```
+
+Runnable examples live in [examples/render.zig](examples/render.zig) (fixed
+budgets) and [examples/api.zig](examples/api.zig) (one-shot, workspace, variation
+fallback, and error recovery). Build both with `zig build examples`, or run
+`zig build api-example -- test/StandardSymbolsPS.otf`.
 
 The workspace retains temporary memory between glyphs, including outline,
 curve, edge, and scanline buffers. After sufficient capacity has been retained,
@@ -151,7 +156,7 @@ contracts, and [test font provenance](test/FONTS.md) for development assets.
 * Font loading validates directory ranges and required metric-table sizes;
   malformed required data is rejected rather than replaced with guessed counts.
   Font bytes are borrowed and must remain immutable and alive while used.
-* Untrusted font files are not supported; table-internal validation is still in progress.
+* Untrusted-font support is not yet claimed; see the release-review and fuzz-coverage limits.
 
 ## Checked queries and render inputs
 
@@ -211,6 +216,9 @@ The exact tested compiler is pinned in [.zigversion](.zigversion). Run
 `ZIG=/path/to/zig sh scripts/check.sh` for tests, fuzz smoke checks, examples,
 manifest-only downstream consumption, and cross-compilation. See
 [docs/VALIDATION.md](docs/VALIDATION.md) for CI activation and reference scope.
+
+See [CHANGELOG.md](CHANGELOG.md) for migration notes and
+[docs/RELEASE.md](docs/RELEASE.md) for outstanding stable-release gates.
 
 ## Roadmap
 

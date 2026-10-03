@@ -347,25 +347,25 @@ Performance work may continue after release when no correctness issue remains.
 
 - [x] Publish a support matrix for containers, outline formats, cmap formats,
   positioning, hinting, and unsupported font technologies.
-- [ ] Add compiling examples for one-shot rendering, workspace reuse, variation
+- [x] Add compiling examples for one-shot rendering, workspace reuse, variation
   selectors, fixed-budget rendering, and error recovery.
 - [x] Document font-byte lifetime, scratch/output ownership, thread usage,
   coordinate conventions, supported inputs, limits, and error behavior.
 - [x] Audit public implementation details such as `CharstringCtx` and decide
   whether to support, deprecate, or internalize them before API stabilization.
-- [ ] Review package contents, reference/font licenses, versioning, changelog,
+- [x] Review package contents, reference/font licenses, versioning, changelog,
   migration notes, and toolchain support.
 
 ### Core release gate
 
-- [ ] All advertised static-font features have fixtures and documented outcomes.
+- [x] All advertised static-font features have fixtures and documented outcomes.
 - [ ] All selected CI gates pass on the declared supported targets.
 - [ ] No known crashes, leaks, unchecked supported-parser reads, or unbounded
   input-driven expansion remain in the release scope.
-- [ ] Fuzz regressions are fixed or explicitly block the affected feature.
-- [ ] Workspace and fixed-budget claims have executable evidence.
-- [ ] A clean downstream consumer can build and run the documented examples.
-- [ ] Compatibility changes and remaining limitations are visible to users.
+- [x] Fuzz regressions are fixed or explicitly block the affected feature.
+- [x] Workspace and fixed-budget claims have executable evidence.
+- [x] A clean downstream consumer can build and run the documented examples.
+- [x] Compatibility changes and remaining limitations are visible to users.
 
 Keep the current untrusted-font limitation until the complete supported parsing
 surface and resource limits have been reviewed and tested. Any later support
@@ -494,8 +494,14 @@ behavior and failures; a larger number alone is not evidence of broader coverage
 7. Select D, E, or a later extension based on the next concrete rendering or
    typography requirement. Keep those releases independently usable.
 
-**Next implementation slice:** A3, extract bounded TrueType outline decoding.
-Q1–Q3 and A1–A2 are implemented; broader corpus and release review remain pending.
+**Current delivery:** Q1–Q4, A1–A3, the authored corpus/provenance work in A4,
+B1–B2, local automation, and C2 documentation/examples are implemented.
+
+**Next release actions:** activate hosted CI, collect native runtime results for
+additional declared platforms, and configure a stable benchmark artifact runner.
+The full safety/release review remains an open gate. A second renderer is
+conditional on an unresolved comparison need. D/E and later technologies remain
+separate projects selected by concrete typography requirements, as scoped above.
 
 For every completed slice, append a short record here or link its commit with:
 what changed, the regression/acceptance evidence, any public behavior change,
@@ -706,3 +712,22 @@ and the next unresolved dependency.
   Validation: all 70 tests passed in Debug and ReleaseSafe; the new numeric
   regression also passed in ReleaseFast. Short deterministic mutation checks
   passed with the expanded harness. Longer campaign evidence follows separately.
+
+- C2 documentation/example slice: added an executable one-shot/workspace/
+  variation/error-recovery example alongside fixed-budget rendering, corrected
+  the README snippet, and added migration/release notes without changing the
+  development version or publishing. Both examples run against bundled fonts;
+  manifest-only downstream consumption and packaged example compilation pass.
+  Both examples cross-compile for aarch64 Linux, x86_64 Windows, and aarch64
+  macOS. Hosted/native multi-platform runtime gates remain explicitly open.
+
+  Extended validation: serial native fuzzing completed 4,013,610 executions
+  across all four targets, followed by 1,000,000 deterministic mutations, with
+  no failures. `fuzz/CAMPAIGN.md` records durations, cumulative-cache semantics,
+  corpus limits, and the separately authored numeric regression. Five normal
+  fuzz/seed checks also pass with the final harness.
+  Final benchmark validation (`workloads-checked.csv`) preserved all output hashes
+  and allocation/memory columns. Runtime numeric checks added roughly 12–17% to
+  local Noto medians; Symbols remained roughly 3–12% below the earlier baseline.
+  This tradeoff is recorded rather than presenting the isolated CFF improvement
+  as an end-to-end claim for the final hardened renderer.

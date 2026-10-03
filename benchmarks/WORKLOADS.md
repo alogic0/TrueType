@@ -63,3 +63,14 @@ workspace rendering across the four workloads. Noto medians changed -3.6% to
 +2.1%, consistent with local run variation; its decoding path is unchanged.
 This supports retaining this specific removal of a redundant CFF interpretation
 pass. It does not establish a general speedup for workspaces or other fonts.
+
+## Final numeric checks
+
+`workloads-checked.csv` records the final rasterizer after numeric assertions
+became recoverable errors (`e6b0f25`). All output hashes and allocation/memory
+columns still match the baseline. Compared with `workloads.csv`, local Noto
+medians increased about 12–17%; Symbols medians remain about 3–12% lower. The
+narrow CFF bounds experiment above isolates the optimization; the final timings
+also include the cost of runtime numeric checks. Correctness takes precedence
+over recovering that cost. Further optimization needs stage evidence and must
+preserve the extreme-scale error/recovery contract.

@@ -26,3 +26,30 @@ campaigns, and record isolated cache statistics when comparing coverage. The
 64 KiB input ceiling deliberately excludes the large bundled Noto font; normal
 valid-font regression tests still exercise it. Existing untrusted-font support
 limitations remain in place.
+
+## Extended campaign after numeric hardening
+
+Core: `e6b0f25`, same compiler/platform, ReleaseSafe; bitmap inputs now also
+exercise extreme finite anisotropy. `scripts/fuzz-long.sh` ran the four native
+targets serially with `--fuzz=1M --seed=0x3abb56a7`, then 1,000,000 deterministic
+mutations with the same seed. All completed without a failure.
+
+| Native target | Cumulative runs before → after | Execution duration |
+| --- | ---: | ---: |
+| Loader | 0 → 1,003,194 | 33 s |
+| Queries | 1,003,194 → 2,006,781 | 34 s |
+| Outlines | 2,006,781 → 3,009,999 | 35 s |
+| Bitmaps | 3,009,999 → 4,013,610 | 36 s |
+
+The compiler reports a shared cache identity, 13,545 cumulative unique runs, and
+898/11,621 instrumented coverage locations at completion. Serial ranges avoid
+the overlap caveat in the initial campaign, but these remain compiler counters,
+not proof of exhaustive format coverage. Compilation took about 12 seconds per
+filtered target, separate from execution durations. Deterministic replay then
+reported all 1,000,000 mutations complete. The unit suite passed 70 tests in
+Debug and ReleaseSafe; the numeric regression also passed in ReleaseFast.
+
+The anisotropy assertion was found by an authored parameter test before this
+campaign, fixed in `e6b0f25`, and retained in `test/contracts.zig`. No crash from
+this extended fuzz campaign required minimization. Input/corpus limits and the
+untrusted-font caveat above continue to apply.

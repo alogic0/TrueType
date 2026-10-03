@@ -94,10 +94,25 @@ pub fn build(b: *std.Build) void {
         }),
     });
     example.root_module.addImport("TrueType", tt_mod);
-    b.step("examples", "Compile the fixed-budget rendering example").dependOn(&example.step);
+    const examples_step = b.step("examples", "Compile rendering and API examples");
+    examples_step.dependOn(&example.step);
     const run_example = b.addRunArtifact(example);
     run_example.addPassthruArgs();
     b.step("example", "Render a glyph: zig build example -- path/to/font.ttf").dependOn(&run_example.step);
+
+    const api_example = b.addExecutable(.{
+        .name = "truetype-api-example",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/api.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    api_example.root_module.addImport("TrueType", tt_mod);
+    examples_step.dependOn(&api_example.step);
+    const run_api_example = b.addRunArtifact(api_example);
+    run_api_example.addPassthruArgs();
+    b.step("api-example", "Run API usage and recovery examples with a font path").dependOn(&run_api_example.step);
 
     const workloads = b.addExecutable(.{
         .name = "truetype-workloads",
