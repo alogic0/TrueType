@@ -68,6 +68,7 @@ pub fn load(bytes: []const u8) LoadError!TrueType {
     const tables_len = readInt(u16, bytes[4..][0..2], .big);
     if (12 + 16 * tables_len > bytes.len) return error.EndOfStream;
     var cff_offset: u32 = 0;
+    var cff_length: u32 = 0;
     for (0..tables_len) |i| {
         const loc = 12 + 16 * i;
         const id: TableId = switch (readInt(u32, bytes[loc..][0..4], native_endian)) {
@@ -82,6 +83,7 @@ pub fn load(bytes: []const u8) LoadError!TrueType {
             TableId.maxp.asInt() => .maxp,
             readInt(u32, "CFF ", native_endian) => {
                 cff_offset = readInt(u32, bytes[loc + 8 ..][0..4], .big);
+                cff_length = readInt(u32, bytes[loc + 12 ..][0..4], .big);
                 continue;
             },
             else => continue,
@@ -100,7 +102,8 @@ pub fn load(bytes: []const u8) LoadError!TrueType {
         if (table_offsets[@backingInt(TableId.loca)] == 0) return error.MissingRequiredTable;
     } else {
         if (cff_offset == 0) return error.MissingRequiredTable;
-        cff_data = try .init(cff_offset, bytes.ptr);
+        if (cff_offset > bytes.len or cff_length > bytes.len - cff_offset) return error.EndOfStream;
+        cff_data = try .init(bytes[cff_offset..][0..cff_length]);
     }
 
     const maxp = table_offsets[@backingInt(TableId.maxp)];

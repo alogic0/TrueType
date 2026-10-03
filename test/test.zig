@@ -444,3 +444,44 @@ fn expectNearlyEqual(expected: []const u8, actual: []const u8) anyerror!void {
         return expectEqualSlices(u8, expected, actual);
     }
 }
+
+// Locate a directory record so tests can alter its range without corrupting
+// the other required tables in the bundled font.
+fn tableRecord(bytes: []const u8, tag: *const [4]u8) usize {
+    for (0..readU16(bytes, 4)) |i| {
+        const record = 12 + 16 * i;
+        if (std.mem.eql(u8, bytes[record..][0..4], tag)) return record;
+    }
+    unreachable;
+}
+
+test "CFF uses its declared table bounds" {
+    const original = @embedFile("StandardSymbolsPS.otf");
+    const record = tableRecord(original, "CFF ");
+    const offset = std.mem.readInt(u32, original[record + 8 ..][0..4], .big);
+    const length = std.mem.readInt(u32, original[record + 12 ..][0..4], .big);
+    const font = try TrueType.load(original);
+    try expectEqual(length, font.cff_data.cff.size);
+    try expectEqualSlices(u8, original[offset..][0..length], font.cff_data.cff.data[0..font.cff_data.cff.size]);
+
+    const bytes = try std.testing.allocator.dupe(u8, original);
+    defer std.testing.allocator.free(bytes);
+    for ([_][2]u32{
+        .{ @intCast(bytes.len + 1), length },
+        .{ offset, @intCast(bytes.len - offset + 1) },
+        .{ 0xfffffff0, 0xffffffff },
+    }) |range| {
+        @memcpy(bytes, original);
+        std.mem.writeInt(u32, bytes[record + 8 ..][0..4], range[0], .big);
+        std.mem.writeInt(u32, bytes[record + 12 ..][0..4], range[1], .big);
+        try std.testing.expectError(error.EndOfStream, TrueType.load(bytes));
+    }
+    for (0..4) |short_length| {
+        @memcpy(bytes, original);
+        std.mem.writeInt(u32, bytes[record + 12 ..][0..4], @intCast(short_length), .big);
+        try std.testing.expectError(error.UnsupportedCffData, TrueType.load(bytes));
+    }
+    @memcpy(bytes, original);
+    bytes[offset + 2] = 3; // header size must include the four header bytes
+    try std.testing.expectError(error.UnsupportedCffData, TrueType.load(bytes));
+}

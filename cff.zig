@@ -62,11 +62,10 @@ pub const CffData = struct {
         UnsupportedCffData,
     };
 
-    pub fn init(cff_offset: u32, bytes: [*]const u8) InitError!CffData {
+    pub fn init(bytes: []const u8) InitError!CffData {
+        if (bytes.len < 4 or bytes[2] < 4 or bytes[2] > bytes.len) return error.UnsupportedCffData;
         var result: CffData = .empty;
-        // TODO this should use size from table (not 512MB)
-        // https://codeberg.org/andrewrk/TrueType/issues/50
-        result.cff = .init(bytes + cff_offset, 512 * 1024 * 1024);
+        result.cff = .init(bytes.ptr, @intCast(bytes.len));
         var b = result.cff;
         // read the header
         b.skip(2);
