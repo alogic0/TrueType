@@ -148,12 +148,12 @@ relative to the enclosing table or glyph, not merely the whole file. The
 [OpenType file format](https://learn.microsoft.com/en-us/typography/opentype/spec/otff)
 defines the directory and table ranges used by this work.
 
-- [ ] Introduce a small checked binary-reader/table-view abstraction, with
+- [x] Introduce a small checked binary-reader/table-view abstraction, with
   subtraction-based span checks and checked count/size arithmetic.
-- [ ] Validate the font header, directory extent, consumed table ranges, and
+- [x] Validate the font header, directory extent, consumed table ranges, and
   required table sizes. Define handling of duplicate tags, unsupported versions,
   missing required data, and empty optional tables.
-- [ ] Validate the relationships between glyph counts, horizontal metric counts,
+- [x] Validate the relationships between glyph counts, horizontal metric counts,
   metric records, and short/long location entries.
 - [ ] Bound each glyph to its own `loca` interval within `glyf`; validate contour
   endpoints, instructions, flag repeats, coordinate streams, and component data.
@@ -539,3 +539,15 @@ and the next unresolved dependency.
   missing endchar, return outside subroutines, and unsupported composites.
   Validation: 42 font/API tests passed in Debug and ReleaseSafe, plus three
   unchanged cached rasterizer tests (45 tests across both roots).
+
+- Q3 directory/metrics slice: added `reader.zig` for checked spans, records, and
+  big-endian reads, and `sfnt.zig` for directory/metadata validation. Font loading
+  retains table lengths, requires coherent maxp/hhea/hmtx/loca sizes, validates
+  cmap encoding-record bounds, and checks CFF glyph-count agreement. Supported
+  container signatures are sfnt TrueType, OTTO, and legacy `true`; consumed
+  duplicate tags are rejected. Empty optional tables require a valid directory
+  offset; their contents remain subject to the later table-reader slices.
+  Regression fixtures cover truncated headers/tables, bad offsets, duplicate
+  tags, missing metadata, metric counts, and escaping cmap records.
+  Validation: 45 font/API tests passed in Debug and ReleaseSafe, plus three
+  unchanged cached rasterizer tests (48 tests across both roots).

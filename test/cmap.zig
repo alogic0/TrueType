@@ -162,6 +162,12 @@ test "cmap selection includes record zero and separates variations" {
     put(u32, bytes, offset + 16, @intCast(original.len - offset));
     put(u16, bytes, original.len, 14);
     put(u32, bytes, original.len + 2, 10);
+    const table_count = std.mem.readInt(u16, bytes[4..6], .big);
+    for (0..table_count) |i| {
+        const record = 12 + i * 16;
+        if (std.mem.eql(u8, bytes[record..][0..4], "cmap"))
+            put(u32, bytes, record + 12, @intCast(bytes.len - offset));
+    }
     const with_variations = try TrueType.load(bytes);
     try expectEqual(base.index_map, with_variations.index_map);
     try expectEqual(original.len, with_variations.variation_map);

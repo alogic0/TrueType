@@ -1,6 +1,3 @@
-const builtin = @import("builtin");
-const native_endian = builtin.cpu.arch.endian();
-
 const std = @import("std");
 const readInt = std.mem.readInt;
 const Allocator = std.mem.Allocator;
@@ -12,8 +9,10 @@ const rasterizer = @import("rasterizer.zig");
 const cff = @import("cff.zig");
 const cmap = @import("cmap.zig");
 const CffData = cff.CffData;
+const sfnt = @import("sfnt.zig");
 
-table_offsets: [@typeInfo(TableId).@"enum".field_names.len]u32,
+table_offsets: [sfnt.table_count]u32,
+table_lengths: [sfnt.table_count]u32 = @splat(0),
 ttf_bytes: []const u8,
 index_map: u32,
 variation_map: u32 = 0,
@@ -23,22 +22,7 @@ cff_data: CffData,
 
 pub const GlyphIndex = @import("glyph.zig").GlyphIndex;
 
-pub const TableId = enum {
-    cmap,
-    loca,
-    head,
-    glyf,
-    hhea,
-    hmtx,
-    kern,
-    GPOS,
-    maxp,
-
-    fn asInt(id: TableId) u32 {
-        const array4: [4]u8 = @tagName(id).*;
-        return @bitCast(array4);
-    }
-};
+pub const TableId = sfnt.TableId;
 
 const PlatformId = enum(u16) {
     unicode = 0,
@@ -59,68 +43,34 @@ pub const LoadError = error{
     EndOfStream,
     MissingRequiredTable,
     IndexMapMissing,
-} || CffData.InitError;
+} || CffData.InitError || sfnt.Error;
 
 pub fn load(bytes: []const u8) LoadError!TrueType {
-    // Find tables.
-    var table_offsets: [@typeInfo(TableId).@"enum".field_names.len]u32 = @splat(0);
-    if (bytes.len < 6) return error.EndOfStream;
-    const tables_len = readInt(u16, bytes[4..][0..2], .big);
-    if (12 + 16 * tables_len > bytes.len) return error.EndOfStream;
-    var cff_offset: u32 = 0;
-    var cff_length: u32 = 0;
-    for (0..tables_len) |i| {
-        const loc = 12 + 16 * i;
-        const id: TableId = switch (readInt(u32, bytes[loc..][0..4], native_endian)) {
-            TableId.cmap.asInt() => .cmap,
-            TableId.loca.asInt() => .loca,
-            TableId.head.asInt() => .head,
-            TableId.glyf.asInt() => .glyf,
-            TableId.hhea.asInt() => .hhea,
-            TableId.hmtx.asInt() => .hmtx,
-            TableId.kern.asInt() => .kern,
-            TableId.GPOS.asInt() => .GPOS,
-            TableId.maxp.asInt() => .maxp,
-            readInt(u32, "CFF ", native_endian) => {
-                cff_offset = readInt(u32, bytes[loc + 8 ..][0..4], .big);
-                cff_length = readInt(u32, bytes[loc + 12 ..][0..4], .big);
-                continue;
-            },
-            else => continue,
-        };
-        table_offsets[@backingInt(id)] = readInt(u32, bytes[loc + 8 ..][0..4], .big);
-    }
-
-    if (table_offsets[@backingInt(TableId.cmap)] == 0) return error.MissingRequiredTable;
-    if (table_offsets[@backingInt(TableId.head)] == 0) return error.MissingRequiredTable;
-    if (table_offsets[@backingInt(TableId.hhea)] == 0) return error.MissingRequiredTable;
-    if (table_offsets[@backingInt(TableId.hmtx)] == 0) return error.MissingRequiredTable;
-
+    const directory = try sfnt.Directory.init(bytes);
+    const metadata = try directory.metadata();
+    const table_offsets = directory.offsets;
     var cff_data: CffData = .empty;
-
-    if (table_offsets[@backingInt(TableId.glyf)] != 0) {
-        if (table_offsets[@backingInt(TableId.loca)] == 0) return error.MissingRequiredTable;
-    } else {
-        if (cff_offset == 0) return error.MissingRequiredTable;
-        if (cff_offset > bytes.len or cff_length > bytes.len - cff_offset) return error.EndOfStream;
-        cff_data = try .init(bytes[cff_offset..][0..cff_length]);
+    if (table_offsets[@backingInt(TableId.glyf)] == 0) {
+        cff_data = try .init(bytes[directory.cff_offset..][0..directory.cff_length]);
+        if (try cff_data.charstrings.cffIndexCount() != metadata.glyphs) return error.InvalidFontData;
     }
-
-    const maxp = table_offsets[@backingInt(TableId.maxp)];
-    const glyphs_len = if (maxp == 0) 0xffff else readInt(u16, bytes[maxp + 4 ..][0..2], .big);
-
+    const glyphs_len = metadata.glyphs;
+    const cmap_table = try directory.table(.cmap);
+    if (try cmap_table.read(u16, 0) != 0) return error.UnsupportedFontVersion;
+    const cmap_tables_len = try cmap_table.read(u16, 2);
+    _ = try cmap_table.records(4, cmap_tables_len, 8);
     const cmap_offset = table_offsets[@backingInt(TableId.cmap)];
-    const cmap_tables_len = readInt(u16, bytes[cmap_offset + 2 ..][0..2], .big);
     var index_map: u32 = 0;
     var variation_map: u32 = 0;
     // Preserve the last suitable base map, including record zero. A variation
     // subtable supplements the base map and must never replace it.
     for (0..cmap_tables_len) |i| {
-        const record = cmap_offset + 4 + 8 * i;
-        const platform = readInt(u16, bytes[record..][0..2], .big);
-        const encoding = readInt(u16, bytes[record + 2 ..][0..2], .big);
-        const offset = cmap_offset + readInt(u32, bytes[record + 4 ..][0..4], .big);
-        const format = readInt(u16, bytes[offset..][0..2], .big);
+        const record = 4 + 8 * i;
+        const platform = try cmap_table.read(u16, record);
+        const encoding = try cmap_table.read(u16, record + 2);
+        const relative = try cmap_table.read(u32, record + 4);
+        const format = try cmap_table.read(u16, relative);
+        const offset = cmap_offset + relative;
         if (platform == @backingInt(PlatformId.unicode) and encoding == 5 and format == 14) {
             variation_map = offset;
             continue;
@@ -136,11 +86,11 @@ pub fn load(bytes: []const u8) LoadError!TrueType {
     }
     if (index_map == 0) return error.IndexMapMissing;
 
-    const head = table_offsets[@backingInt(TableId.head)];
-    const index_to_loc_format = readInt(u16, bytes[head + 50 ..][0..2], .big);
+    const index_to_loc_format = metadata.location_format;
 
     return .{
         .table_offsets = table_offsets,
+        .table_lengths = directory.lengths,
         .ttf_bytes = bytes,
         .index_map = index_map,
         .variation_map = variation_map,

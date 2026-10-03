@@ -9,6 +9,8 @@
         "README.md",
         "PLAN.md",
         "TrueType.zig",
+        "reader.zig",
+        "sfnt.zig",
         "cff.zig",
         "type2.zig",
         "cmap.zig",

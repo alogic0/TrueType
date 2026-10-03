@@ -493,4 +493,5 @@ test {
     _ = @import("allocation.zig");
     _ = @import("cff.zig");
     _ = @import("type2.zig");
+    _ = @import("sfnt.zig");
 }

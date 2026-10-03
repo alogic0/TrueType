@@ -111,7 +111,10 @@ scales need separate measurements.
   `UnsupportedCffSeac`, and reserved operator codes return `ReservedOperator`.
 * Kerning
 * Font shaping and ligatures are not yet implemented.
-* Untrusted font files are not supported.
+* Font loading validates directory ranges and required metric-table sizes;
+  malformed required data is rejected rather than replaced with guessed counts.
+  Font bytes are borrowed and must remain immutable and alive while used.
+* Untrusted font files are not supported; table-internal validation is still in progress.
 
 ## Roadmap
 
