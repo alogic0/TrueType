@@ -180,6 +180,40 @@ pub const GlyphBitmap = struct {
 pub const GlyphBitmapError = cff.GlyphShapeError || error{InvalidCompositeGlyph};
 pub const CharstringCtx = cff.CharstringCtx;
 
+pub const RasterizerWorkspace = rasterizer.Workspace;
+
+/// Appends a bitmap to caller-owned pixels, reusing temporary workspace storage.
+/// Both allocators must outlive their allocations. Do not use the workspace's
+/// temporary allocator for pixels: its storage is reset after every render.
+pub fn glyphBitmapWithWorkspace(
+    tt: *const TrueType,
+    gpa: Allocator,
+    pixels: *ArrayList(u8),
+    workspace: *RasterizerWorkspace,
+    glyph: GlyphIndex,
+    scale_x: f32,
+    scale_y: f32,
+) GlyphBitmapError!GlyphBitmap {
+    return glyphBitmapSubpixelWithWorkspace(tt, gpa, pixels, workspace, glyph, scale_x, scale_y, 0, 0);
+}
+
+/// Subpixel variant of glyphBitmapWithWorkspace. Workspace storage is reset on
+/// success and failure; a failed render leaves the pixel list length unchanged.
+pub fn glyphBitmapSubpixelWithWorkspace(
+    tt: *const TrueType,
+    gpa: Allocator,
+    pixels: *ArrayList(u8),
+    workspace: *RasterizerWorkspace,
+    glyph: GlyphIndex,
+    scale_x: f32,
+    scale_y: f32,
+    shift_x: f32,
+    shift_y: f32,
+) GlyphBitmapError!GlyphBitmap {
+    defer workspace.reset();
+    return glyphBitmapSubpixelInner(tt, gpa, workspace.allocator(), pixels, glyph, scale_x, scale_y, shift_x, shift_y);
+}
+
 /// Caller owns returned memory.
 pub fn glyphBitmap(
     tt: *const TrueType,
@@ -209,8 +243,23 @@ pub fn glyphBitmapSubpixel(
     shift_x: f32,
     shift_y: f32,
 ) GlyphBitmapError!GlyphBitmap {
-    const vertices = try glyphShape(tt, gpa, glyph);
-    defer gpa.free(vertices);
+    return glyphBitmapSubpixelInner(tt, gpa, gpa, pixels, glyph, scale_x, scale_y, shift_x, shift_y);
+}
+
+fn glyphBitmapSubpixelInner(
+    tt: *const TrueType,
+    gpa: Allocator,
+    scratch: Allocator,
+    pixels: *ArrayList(u8),
+    glyph: GlyphIndex,
+    scale_x: f32,
+    scale_y: f32,
+    shift_x: f32,
+    shift_y: f32,
+) GlyphBitmapError!GlyphBitmap {
+    const vertices = try glyphShape(tt, scratch, glyph);
+    defer scratch.free(vertices);
+    if (vertices.len == 0) return .empty;
 
     assert(scale_x != 0);
     assert(scale_y != 0);
@@ -230,7 +279,7 @@ pub fn glyphBitmapSubpixel(
     };
     errdefer pixels.shrinkRetainingCapacity(pixels.items.len - gbm.pixels.len);
 
-    try rasterizer.rasterize(gpa, &gbm, 0.35, vertices, scale_x, scale_y, shift_x, shift_y, box.x0, box.y0, true);
+    try rasterizer.rasterize(scratch, &gbm, 0.35, vertices, scale_x, scale_y, shift_x, shift_y, box.x0, box.y0, true);
 
     return .{
         .width = @intCast(gbm.w),

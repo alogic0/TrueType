@@ -21,12 +21,14 @@ defer stdout.flush() catch {};
 
 var glyph_buffer: std.ArrayListUnmanaged(u8) = .empty;
 defer glyph_buffer.deinit(init.gpa);
+var workspace: TrueType.RasterizerWorkspace = .init(init.gpa);
+defer workspace.deinit();
 var it = std.unicode.Utf8View.initComptime(example_string).iterator();
 while (it.nextCodepoint()) |codepoint| {
     const glyph = ttf.codepointGlyphIndex(codepoint);
     std.log.debug("0x{x}: {d}", .{ codepoint, glyph });
     glyph_buffer.clearRetainingCapacity();
-    const dims = try ttf.glyphBitmap(gpa, &glyph_buffer, glyph, scale, scale);
+    const dims = try ttf.glyphBitmapWithWorkspace(init.gpa, &glyph_buffer, &workspace, glyph, scale, scale);
     const pixels = glyph_buffer.items;
     for (0..dims.height) |j| {
         for (0..dims.width) |i| {
@@ -36,6 +38,14 @@ while (it.nextCodepoint()) |codepoint| {
     }
 }
 ```
+
+The workspace retains temporary memory between glyphs, including outline,
+curve, edge, and scanline buffers. After sufficient capacity has been retained,
+subsequent renders that fit it avoid backing-allocator calls for temporary data.
+The pixel list owns its memory separately and can retain its capacity too.
+Use one workspace per concurrent render; call `workspace.release()` to free its
+cached memory early. The original `glyphBitmap` and `glyphBitmapSubpixel` APIs
+remain available for one-off rendering.
 
 ## Features and Limitations
 

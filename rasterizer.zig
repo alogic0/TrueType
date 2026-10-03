@@ -6,6 +6,38 @@ const assert = std.debug.assert;
 const ArrayList = std.ArrayListUnmanaged;
 const Vertex = @import("glyph.zig").Vertex;
 
+/// Reusable temporary storage for glyph decoding and rasterization. Use one
+/// workspace per concurrent render. Rendering resets it while retaining capacity;
+/// deinit or release frees retained memory. Output pixels must live elsewhere.
+pub const Workspace = struct {
+    arena: std.heap.ArenaAllocator,
+
+    pub fn init(gpa: Allocator) Workspace {
+        return .{ .arena = .init(gpa) };
+    }
+
+    pub fn deinit(workspace: *Workspace) void {
+        workspace.arena.deinit();
+        workspace.* = undefined;
+    }
+
+    /// Releases cached storage while leaving the workspace ready for reuse.
+    pub fn release(workspace: *Workspace) void {
+        _ = workspace.arena.reset(.free_all);
+    }
+
+    /// Temporary allocations are invalidated when rendering returns.
+    pub fn allocator(workspace: *Workspace) Allocator {
+        return workspace.arena.allocator();
+    }
+
+    pub fn reset(workspace: *Workspace) void {
+        // Retaining capacity is an optimization. A failed consolidation still
+        // leaves an empty, usable arena and must not fail a completed render.
+        _ = workspace.arena.reset(.retain_capacity);
+    }
+};
+
 pub const Bitmap = struct {
     w: u32,
     h: u32,
