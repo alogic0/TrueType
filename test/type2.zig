@@ -74,3 +74,57 @@ test "CFF Type 2 rejects stack and arithmetic faults" {
     try w.writeByte(14);
     try expectFailure(w.buffered(), error.CffNumericOverflow);
 }
+
+test "CFF Type 2 transient storage and conditionals" {
+    for ([_]struct { code: []const u8, values: []const i16 }{
+        .{ .code = &.{ 144, 170, 12, 20, 170, 12, 21 }, .values = &.{5} }, // put/get last slot
+        .{ .code = &.{ 140, 138, 12, 3 }, .values = &.{1} },
+        .{ .code = &.{ 140, 139, 12, 3 }, .values = &.{0} },
+        .{ .code = &.{ 139, 138, 12, 4 }, .values = &.{1} },
+        .{ .code = &.{ 139, 139, 12, 4 }, .values = &.{0} },
+        .{ .code = &.{ 139, 12, 5 }, .values = &.{1} },
+        .{ .code = &.{ 138, 12, 5 }, .values = &.{0} },
+        .{ .code = &.{ 144, 144, 12, 15 }, .values = &.{1} },
+        .{ .code = &.{ 144, 145, 12, 15 }, .values = &.{0} },
+        .{ .code = &.{ 149, 159, 140, 141, 12, 22 }, .values = &.{10} },
+        .{ .code = &.{ 149, 159, 141, 141, 12, 22 }, .values = &.{10} },
+        .{ .code = &.{ 149, 159, 142, 141, 12, 22 }, .values = &.{20} },
+    }) |case| try expectOperands(case.code, case.values);
+    // A subsequent glyph (and its counting pass) cannot see a previous put.
+    try expectFailure(&.{ 170, 12, 21, 14 }, error.UninitializedCffStorage);
+    for ([_][]const u8{
+        &.{ 144, 171, 12, 20, 14 }, &.{ 144, 138, 12, 20, 14 },
+        &.{ 171, 12, 21, 14 },      &.{ 138, 12, 21, 14 },
+    }) |code| try expectFailure(code, error.InvalidCffOperand);
+    for ([_]u8{ 3, 4, 5, 15, 20, 21, 22 }) |op|
+        try expectFailure(&.{ 12, op, 14 }, error.StackUnderflow);
+}
+
+test "CFF Type 2 random repeats across bounds outlines and calls" {
+    var storage: [128]u8 = undefined;
+    const tt = try programFont(&storage, &.{ 12, 23, 239, 12, 24, 12, 27, 21, 14 });
+    const a = try tt.glyphShape(std.testing.allocator, @fromBackingInt(0));
+    defer std.testing.allocator.free(a);
+    const b = try tt.glyphShape(std.testing.allocator, @fromBackingInt(0));
+    defer std.testing.allocator.free(b);
+    try std.testing.expectEqual(a.len, b.len);
+    try std.testing.expect(a[0].x >= 0 and a[0].x <= 100);
+    try std.testing.expectEqual(a[0].x, a[0].y);
+    for (a, b) |va, vb| try std.testing.expectEqualDeep(va, vb);
+    const box = tt.glyphBox(@fromBackingInt(0)).?;
+    try std.testing.expectEqual(a[0].x, box.x0);
+    try std.testing.expectEqual(a[0].x, box.x1);
+    var full: [51]u8 = @splat(139);
+    @memcpy(full[48..], &[_]u8{ 12, 23, 14 });
+    try expectFailure(&full, error.PushStackOverflow);
+}
+
+test "CFF Type 2 subroutines share stack and transient storage" {
+    var storage: [128]u8 = undefined;
+    var tt = try programFont(&storage, &.{ 149, 139, 12, 20, 144, 32, 29, 139, 21, 14 });
+    const subr = [_]u8{ 0, 1, 1, 1, 7, 139, 12, 21, 12, 10, 11 };
+    tt.cff_data.gsubrs = .init(&subr, subr.len);
+    const shape = try tt.glyphShape(std.testing.allocator, @fromBackingInt(0));
+    defer std.testing.allocator.free(shape);
+    try std.testing.expectEqual(15, shape[0].x);
+}

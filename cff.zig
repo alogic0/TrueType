@@ -479,6 +479,7 @@ const Instruction = enum(u8) {
 };
 
 fn runCharstring(cff_data: *const CffData, glyph: GlyphIndex, ctx: *CharstringCtx) !void {
+    var state: type2.State = .init(@backingInt(glyph));
     var maskbits: u32 = 0;
     var in_header = true;
     var has_subrs = false;
@@ -651,7 +652,7 @@ fn runCharstring(cff_data: *const CffData, glyph: GlyphIndex, ctx: *CharstringCt
             },
             Instruction.twoByteEscape.asInt() => { // 0x0C
                 const b1 = try b.get8();
-                if (try type2.arithmetic(b1, &s, &sp)) {
+                if (try type2.arithmetic(b1, &s, &sp) or try state.apply(b1, &s, &sp)) {
                     clear_stack = false;
                     continue;
                 }

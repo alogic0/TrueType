@@ -122,9 +122,9 @@ semantics.
 
 - [x] Add arithmetic operations with explicit operand-count and result checks.
 - [x] Add stack manipulation with underflow, overflow, and index validation.
-- [ ] Add per-glyph transient storage and conditional operations; prevent state
+- [x] Add per-glyph transient storage and conditional operations; prevent state
   from leaking between glyphs or the bounds and outline passes.
-- [ ] Define reproducible random-state initialization if `random` is supported.
+- [x] Define reproducible random-state initialization if `random` is supported.
   Both interpretation passes must produce consistent geometry.
 - [ ] Classify valid-but-unsupported operators separately from reserved or
   malformed encodings. Keep the supported-operator list in the documentation.
@@ -520,3 +520,12 @@ and the next unresolved dependency.
   rotation, fractions, stack overflow/underflow, and arithmetic overflow.
   Validation: 36 font/API tests passed in Debug and ReleaseSafe; three unchanged
   rasterizer tests remained cached (39 tests across both roots).
+
+- Q2 storage/conditionals slice: added 32 checked transient slots, `put`, `get`,
+  `and`, `or`, `not`, `eq`, `ifelse`, and deterministic per-glyph `random`.
+  Uninitialized reads return `UninitializedCffStorage`; state is fresh for each
+  interpretation pass and shared only by that pass's subroutines. Tests cover
+  last-slot access, invalid indices, stack arity, all conditional branches,
+  random reproducibility, and subroutine stack/storage sharing.
+  Validation: 39 font/API tests passed in Debug and ReleaseSafe, plus three
+  unchanged cached rasterizer tests (42 tests across both roots).

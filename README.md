@@ -102,6 +102,9 @@ scales need separate measurements.
   `neg`, `drop`, `mul`, `sqrt`, `dup`, `exch`, `index`, and `roll`.
   Invalid arithmetic domains or indices return `InvalidCffOperand`; non-finite
   arithmetic results return `CffNumericOverflow`.
+* Type 2 transient storage (`put`, `get`), conditionals (`and`, `or`, `not`,
+  `eq`, `ifelse`), and deterministic per-glyph `random`. Reading an unwritten
+  storage slot returns `UninitializedCffStorage`.
 * Kerning
 * Font shaping and ligatures are not yet implemented.
 * Untrusted font files are not supported.
