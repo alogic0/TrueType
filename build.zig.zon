@@ -9,6 +9,7 @@
         "README.md",
         "PLAN.md",
         "TrueType.zig",
+        "truetype_outline.zig",
         "reader.zig",
         "sfnt.zig",
         "kerning.zig",

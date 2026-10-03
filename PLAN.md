@@ -252,10 +252,10 @@ Refactor where the preceding changes reveal a coherent responsibility:
 | Metrics and kerning | Metric records and supported positioning queries |
 | Rasterizer | Flattening, coverage, scratch lifetime, bitmap generation |
 
-- [ ] Extract TrueType outlines from the public facade once bounded table views
+- [x] Extract TrueType outlines from the public facade once bounded table views
   provide a stable interface.
 - [x] Extract metrics/kerning when their checked reads are established.
-- [ ] Keep helpers with their owning module; avoid a general utility module that
+- [x] Keep helpers with their owning module; avoid a general utility module that
   obscures which table or allocation a function owns.
 - [ ] Remove or repurpose the currently unused `debug-todo` build option with a
   documented compatibility decision.
@@ -620,3 +620,12 @@ and the next unresolved dependency.
   See `fuzz/CAMPAIGN.md` for measured durations, compiler/cache caveats, and
   remaining corpus limitations. Core code was unchanged after the 63-test
   Debug/ReleaseSafe resource-limit validation.
+
+- A3 outline extraction: moved bounded loca/glyf decoding, composite assembly,
+  point transforms, and contour helpers to `truetype_outline.zig`. Its input is
+  a pair of checked table views plus metadata/limits; it does not import the
+  public facade. `TrueType.zig` is now 421 lines, with ownership/API wrappers
+  retained in the root. Targeted Debug outline/composite tests and five fuzz
+  seed checks plus 2,000 deterministic mutations passed.
+  Full ReleaseSafe validation passed 59 font/API tests; four unchanged rasterizer
+  tests were cached (63 across both roots).
