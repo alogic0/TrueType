@@ -7,7 +7,9 @@ const GlyphIndex = @import("glyph.zig").GlyphIndex;
 const Vertex = @import("glyph.zig").Vertex;
 const BitmapBox = @import("glyph.zig").BitmapBox;
 
-pub const GlyphShapeError = error{
+pub const ParseError = error{ TruncatedCffData, InvalidCffData };
+
+pub const GlyphShapeError = ParseError || error{
     OutOfMemory,
     Unimplemented,
     RMoveToStack,
@@ -58,51 +60,58 @@ pub const CffData = struct {
         .fdselect = .empty,
     };
 
-    pub const InitError = error{
+    pub const InitError = ParseError || error{
         UnsupportedCffData,
     };
 
     pub fn init(bytes: []const u8) InitError!CffData {
         if (bytes.len < 4 or bytes[2] < 4 or bytes[2] > bytes.len) return error.UnsupportedCffData;
+        if (bytes[0] != 1 or bytes[3] < 1 or bytes[3] > 4) return error.UnsupportedCffData;
+        const size = std.math.cast(u32, bytes.len) orelse return error.InvalidCffData;
         var result: CffData = .empty;
-        result.cff = .init(bytes.ptr, @intCast(bytes.len));
+        result.cff = .init(bytes.ptr, size);
         var b = result.cff;
-        // read the header
-        b.skip(2);
-        b.seek(b.get8());
-        // TODO the name INDEX could list multiple fonts, but we just use the first one.
-        // https://codeberg.org/andrewrk/TrueType/issues/51
-        _ = b.cffGetIndex(); // name INDEX
-        var topdictidx = b.cffGetIndex();
-        var topdict = topdictidx.cffIndexGet(@fromBackingInt(@intCast(0)));
-        _ = b.cffGetIndex(); // string INDEX
-        result.gsubrs = b.cffGetIndex();
+        try b.seek(bytes[2]);
+        // OpenType CFF FontSets contain exactly one font.
+        // https://learn.microsoft.com/en-us/typography/opentype/spec/cff
+        var names = try b.cffGetIndex();
+        if (try names.cffIndexCount() != 1) return error.UnsupportedCffData;
+        var topdictidx = try b.cffGetIndex();
+        if (try topdictidx.cffIndexCount() != 1) return error.UnsupportedCffData;
+        var topdict = try topdictidx.cffIndexGet(@fromBackingInt(0));
+        _ = try b.cffGetIndex(); // string INDEX
+        result.gsubrs = try b.cffGetIndex();
 
         var cstype: u32 = 2;
         var csoff: u32 = 0;
         var fdarrayoff: u32 = 0;
         var fdselectoff: u32 = 0;
-
-        topdict.dictGetInts(17, 1, @ptrCast(&csoff));
-        topdict.dictGetInts(0x100 | 6, 1, @ptrCast(&cstype));
-        topdict.dictGetInts(0x100 | 36, 1, @ptrCast(&fdarrayoff));
-        topdict.dictGetInts(0x100 | 37, 1, @ptrCast(&fdselectoff));
-        result.subrs = b.getSubrs(topdict);
-
-        // we only support Type 2 charstrings
+        try topdict.dictGetInts(17, 1, @ptrCast(&csoff));
+        try topdict.dictGetInts(0x100 | 6, 1, @ptrCast(&cstype));
+        try topdict.dictGetInts(0x100 | 36, 1, @ptrCast(&fdarrayoff));
+        try topdict.dictGetInts(0x100 | 37, 1, @ptrCast(&fdselectoff));
+        result.subrs = try b.getSubrs(topdict);
         if (cstype != 2) return error.UnsupportedCffData;
-        if (csoff == 0) return error.UnsupportedCffData;
+        if (csoff == 0) return error.InvalidCffData;
+        try b.seek(csoff);
+        result.charstrings = try b.cffGetIndex();
+        const glyph_count = try result.charstrings.cffIndexCount();
+        if (glyph_count == 0) return error.InvalidCffData;
 
         if (fdarrayoff != 0) {
-            // looks like a CID font
-            if (fdselectoff == 0) return error.UnsupportedCffData;
-            b.seek(fdarrayoff);
-            result.fontdicts = b.cffGetIndex();
-            result.fdselect = b.range(fdselectoff, b.size - fdselectoff);
-        }
-
-        b.seek(csoff);
-        result.charstrings = b.cffGetIndex();
+            if (fdselectoff == 0) return error.InvalidCffData;
+            try b.seek(fdarrayoff);
+            result.fontdicts = try b.cffGetIndex();
+            const dict_count = try result.fontdicts.cffIndexCount();
+            if (dict_count == 0) return error.InvalidCffData;
+            for (0..dict_count) |i| {
+                const dict = try result.fontdicts.cffIndexGet(@fromBackingInt(@as(u16, @intCast(i))));
+                _ = try b.getSubrs(dict);
+            }
+            try b.seek(fdselectoff);
+            result.fdselect = try b.range(fdselectoff, b.size - fdselectoff);
+            try validateFdSelect(result.fdselect, glyph_count, dict_count);
+        } else if (fdselectoff != 0) return error.InvalidCffData;
         return result;
     }
 };
@@ -118,160 +127,163 @@ const Buf = struct {
         return .{ .data = data, .size = size, .cursor = 0 };
     }
 
-    pub fn skip(b: *Buf, o: u32) void {
-        b.seek(b.cursor + o);
+    pub fn skip(b: *Buf, count: u32) ParseError!void {
+        if (count > b.size - b.cursor) return error.TruncatedCffData;
+        b.cursor += count;
     }
 
-    pub fn seek(b: *Buf, o: u32) void {
-        assert(o <= b.size);
-        b.cursor = if (o > b.size) b.size else o;
+    pub fn seek(b: *Buf, offset: u32) ParseError!void {
+        if (offset > b.size) return error.TruncatedCffData;
+        b.cursor = offset;
     }
 
-    pub fn peek8(b: *Buf) u8 {
-        if (b.cursor >= b.size)
-            return 0;
+    pub fn peek8(b: *const Buf) ParseError!u8 {
+        if (b.cursor == b.size) return error.TruncatedCffData;
         return b.data[b.cursor];
     }
 
-    pub fn get8(b: *Buf) u8 {
-        if (b.cursor >= b.size) return 0;
-        defer b.cursor += 1;
-        return b.data[b.cursor];
+    pub fn get8(b: *Buf) ParseError!u8 {
+        const value = try b.peek8();
+        b.cursor += 1;
+        return value;
     }
 
-    pub fn get16(b: *Buf) u16 {
-        return @truncate(b.get(2));
+    pub fn get16(b: *Buf) ParseError!u16 {
+        return @intCast(try b.get(2));
     }
 
-    pub fn get32(b: *Buf) u32 {
+    pub fn get32(b: *Buf) ParseError!u32 {
         return b.get(4);
     }
 
-    pub fn get(b: *Buf, n: u32) u32 {
-        var v: u32 = 0;
-        assert(n >= 1 and n <= 4);
-        for (0..n) |_|
-            v = (v << 8) | b.get8();
-        return v;
+    pub fn get(b: *Buf, count: u32) ParseError!u32 {
+        if (count < 1 or count > 4) return error.InvalidCffData;
+        if (count > b.size - b.cursor) return error.TruncatedCffData;
+        var value: u32 = 0;
+        for (0..count) |_| value = (value << 8) | try b.get8();
+        return value;
     }
 
-    pub fn cffGetIndex(b: *Buf) Buf {
+    pub fn cffGetIndex(b: *Buf) ParseError!Buf {
         const start = b.cursor;
-        const count: u32 = b.get16();
+        const count: u32 = try b.get16();
         if (count != 0) {
-            const offsize: u32 = b.get8();
-            assert(offsize >= 1 and offsize <= 4);
-            b.skip(offsize * count);
-
-            b.skip(b.get(offsize) - 1);
+            const width = try b.get8();
+            if (width < 1 or width > 4) return error.InvalidCffData;
+            var previous = try b.get(width);
+            if (previous != 1) return error.InvalidCffData;
+            for (0..count) |_| {
+                const next = try b.get(width);
+                if (next < previous) return error.InvalidCffData;
+                previous = next;
+            }
+            try b.skip(previous - 1);
         }
         return b.range(start, b.cursor - start);
     }
 
-    pub fn cffIndexGet(b_const: Buf, glyph: GlyphIndex) Buf {
-        var b = b_const;
-        b.seek(0);
-        const count: u32 = b.get16();
-        const offsize: u32 = b.get8();
+    pub fn cffIndexGet(index: Buf, glyph: GlyphIndex) ParseError!Buf {
+        var b = index;
+        try b.seek(0);
+        const count: u32 = try b.get16();
         const i: u32 = @backingInt(glyph);
-        assert(i < count);
-        assert(offsize >= 1 and offsize <= 4);
-        b.skip(i * offsize);
-
-        const start = b.get(offsize);
-        const end = b.get(offsize);
-        return b.range(2 + (count + 1) * offsize + start, end - start);
+        if (i >= count) return error.InvalidCffData;
+        const width: u32 = try b.get8();
+        if (width < 1 or width > 4) return error.InvalidCffData;
+        const data_offset = 3 + (count + 1) * width;
+        if (data_offset > b.size) return error.TruncatedCffData;
+        try b.skip(i * width);
+        const first = try b.get(width);
+        const end = try b.get(width);
+        if (first == 0 or end < first) return error.InvalidCffData;
+        if (end - 1 > b.size - data_offset) return error.TruncatedCffData;
+        return b.range(data_offset + first - 1, end - first);
     }
 
-    pub fn cffIndexCount(b: *Buf) u16 {
-        b.seek(0);
+    pub fn cffIndexCount(b: *Buf) ParseError!u16 {
+        try b.seek(0);
         return b.get16();
     }
 
-    pub fn range(b: *Buf, o: u32, s: u32) Buf {
-        var r = Buf.empty;
-        if (o < 0 or s < 0 or o > b.size or s > b.size - o) return r;
-        r.data = b.data + o;
-        r.size = s;
-        return r;
+    pub fn range(b: *const Buf, offset: u32, size: u32) ParseError!Buf {
+        if (offset > b.size or size > b.size - offset) return error.TruncatedCffData;
+        return .init(b.data + offset, size);
     }
 
-    pub fn cffInt(b: *Buf) u32 {
-        const b0: i32 = b.get8();
-        const result: u32 = switch (b0) {
-            32...246 => @bitCast(b0 - 139),
-            247...250 => @bitCast((b0 - 247) * 256 + b.get8() + 108),
-            251...254 => @bitCast(-(b0 - 251) * 256 - b.get8() - 108),
-            28 => b.get16(),
-            29 => b.get32(),
-            else => @panic("invalid instruction"),
+    pub fn cffInt(b: *Buf) ParseError!u32 {
+        const first: i32 = try b.get8();
+        return switch (first) {
+            32...246 => @bitCast(first - 139),
+            247...250 => @bitCast((first - 247) * 256 + try b.get8() + 108),
+            251...254 => @bitCast(-(first - 251) * 256 - try b.get8() - 108),
+            28 => @bitCast(@as(i32, @as(i16, @bitCast(try b.get16())))),
+            29 => try b.get32(),
+            else => error.InvalidCffData,
         };
-        // std.log.debug("cffInt() b0 {} result {}", .{ b0, result });
-        return result;
     }
 
-    pub fn dictGetInts(b: *Buf, key: u32, outcount: u32, out: [*]u32) void {
-        var operands = b.dictGet(key);
-        for (0..outcount) |i| {
-            if (operands.cursor >= operands.size) break;
-            out[i] = operands.cffInt();
-        }
+    pub fn dictGetInts(b: *Buf, key: u32, count: u32, out: [*]u32) ParseError!void {
+        var operands = try b.dictGet(key);
+        if (operands.size == 0) return; // absent operator: keep the default
+        for (0..count) |i| out[i] = try operands.cffInt();
+        if (operands.cursor != operands.size) return error.InvalidCffData;
     }
 
-    pub fn dictGet(b: *Buf, key: u32) Buf {
-        b.seek(0);
+    pub fn dictGet(b: *Buf, key: u32) ParseError!Buf {
+        try b.seek(0);
         while (b.cursor < b.size) {
             const start = b.cursor;
-            while (b.peek8() >= 28) b.cffSkipOperand();
+            while (try b.peek8() >= 28) try b.cffSkipOperand();
             const end = b.cursor;
-            var op: i32 = b.get8();
-            if (op == 12) op = @as(i32, b.get8()) | 0x100;
-            if (op == key) return b.range(start, end - start);
-        }
-        return b.range(0, 0);
-    }
-
-    fn cffSkipOperand(b: *Buf) void {
-        const b0 = b.peek8();
-        assert(b0 >= 28);
-        if (b0 == 30) {
-            b.skip(1);
-            while (b.cursor < b.size) {
-                const v = b.get8();
-                if ((v & 0xF) == 0xF or (v >> 4) == 0xF)
-                    break;
+            var op: u32 = try b.get8();
+            if (op > 21) return error.InvalidCffData;
+            if (op == 12) op = @as(u32, try b.get8()) | 0x100;
+            if (op == key) {
+                if (end == start) return error.InvalidCffData;
+                return b.range(start, end - start);
             }
-        } else {
-            _ = b.cffInt();
+        }
+        return .empty;
+    }
+
+    fn cffSkipOperand(b: *Buf) ParseError!void {
+        if (try b.peek8() != 30) {
+            _ = try b.cffInt();
+            return;
+        }
+        try b.skip(1);
+        while (true) {
+            const byte = try b.get8();
+            for ([_]u8{ byte >> 4, byte & 0xf }) |nibble| {
+                if (nibble == 0xf) return;
+                if (nibble == 0xd) return error.InvalidCffData;
+            }
         }
     }
 
-    pub fn getSubrs(cff_const: Buf, fontdict_const: Buf) Buf {
-        var private_loc: [2]u32 = .{ 0, 0 };
-        var fontdict = fontdict_const;
-        fontdict.dictGetInts(18, 2, &private_loc);
-        if (private_loc[1] == 0 or private_loc[0] == 0) return .empty;
-        var cff = cff_const;
-        var pdict = cff.range(private_loc[1], private_loc[0]);
-        var subrsoff: u32 = 0;
-        pdict.dictGetInts(19, 1, @ptrCast(&subrsoff));
-        if (subrsoff == 0) return .empty;
-        cff.seek(private_loc[1] + subrsoff);
-        return cff.cffGetIndex();
+    pub fn getSubrs(cff: Buf, dictionary: Buf) ParseError!Buf {
+        var private: [2]u32 = .{ 0, 0 };
+        var dict = dictionary;
+        try dict.dictGetInts(18, 2, &private);
+        if (private[0] == 0) return .empty;
+        var pdict = try cff.range(private[1], private[0]);
+        var offset: u32 = 0;
+        try pdict.dictGetInts(19, 1, @ptrCast(&offset));
+        if (offset == 0) return .empty;
+        if (offset > cff.size - private[1]) return error.TruncatedCffData;
+        var b = cff;
+        try b.seek(private[1] + offset);
+        return b.cffGetIndex();
     }
 
-    fn getSubr(idx_const: Buf, n_const: u32) Buf {
-        var idx = idx_const;
-        var n = n_const;
-        const count = idx.cffIndexCount();
-        n +%= if (count >= 33900)
-            32768
-        else if (count >= 1240)
-            1131
-        else
-            107;
+    fn getSubr(index: Buf, number: u32) ParseError!Buf {
+        if (index.size == 0) return .empty;
+        var b = index;
+        const count = try b.cffIndexCount();
+        const bias: u32 = if (count >= 33900) 32768 else if (count >= 1240) 1131 else 107;
+        const n = number +% bias;
         if (n >= count) return .empty;
-        return idx.cffIndexGet(@fromBackingInt(@intCast(n)));
+        return b.cffIndexGet(@fromBackingInt(@as(u16, @intCast(n))));
     }
 };
 
@@ -461,12 +473,12 @@ fn runCharstring(cff_data: *const CffData, glyph: GlyphIndex, ctx: *CharstringCt
     var subr_stack: std.ArrayList(Buf) = .initBuffer(&subr_buf);
     var subrs = cff_data.subrs;
     // this currently ignores the initial width value, which isn't needed if we have hmtx
-    var b = cff_data.charstrings.cffIndexGet(glyph);
+    var b = try cff_data.charstrings.cffIndexGet(glyph);
 
     while (b.cursor < b.size) {
         var i: u32 = 0;
         clear_stack = true;
-        const b0: u16 = b.get8();
+        const b0: u16 = try b.get8();
         // const tag_name = if (std.meta.intToEnum(Instruction, b0)) |t| @tagName(t) else |_| "other";
         // std.log.debug("{}/{} b0 {s}/{}/0x{x} num_vertices {}", .{ b.cursor, b.size, tag_name, b0, b0, ctx.num_vertices });
 
@@ -477,7 +489,7 @@ fn runCharstring(cff_data: *const CffData, glyph: GlyphIndex, ctx: *CharstringCt
             => {
                 if (in_header) maskbits += (sp / 2); // implicit "vstem"
                 in_header = false;
-                b.skip((maskbits + 7) / 8);
+                try b.skip((maskbits + 7) / 8);
             },
             Instruction.hstem.asInt(), // 0x01
             Instruction.vstem.asInt(), // 0x03
@@ -595,7 +607,7 @@ fn runCharstring(cff_data: *const CffData, glyph: GlyphIndex, ctx: *CharstringCt
             Instruction.callsubr.asInt() => { // 0x0A
                 if (!has_subrs) {
                     if (cff_data.fdselect.size != 0)
-                        subrs = getGlyphSubrs(cff_data, glyph);
+                        subrs = try getGlyphSubrs(cff_data, glyph);
                     has_subrs = true;
                 }
                 continue :sw Instruction.callgsubr.asInt();
@@ -605,7 +617,7 @@ fn runCharstring(cff_data: *const CffData, glyph: GlyphIndex, ctx: *CharstringCt
                 sp = std.math.sub(u32, sp, 1) catch return error.CallGSubRStack;
                 const v: i32 = @intFromFloat(@trunc(s[sp]));
                 subr_stack.appendBounded(b) catch return error.RecursionLimit;
-                b = (if (b0 == Instruction.callsubr.asInt()) // 0x0A
+                b = try (if (b0 == Instruction.callsubr.asInt()) // 0x0A
                     subrs
                 else
                     cff_data.gsubrs).getSubr(@bitCast(v));
@@ -622,7 +634,7 @@ fn runCharstring(cff_data: *const CffData, glyph: GlyphIndex, ctx: *CharstringCt
                 return;
             },
             Instruction.twoByteEscape.asInt() => { // 0x0C
-                const b1 = b.get8();
+                const b1 = try b.get8();
                 switch (b1) {
                     // @TODO These "flex" implementations ignore the flex-depth and resolution,
                     // and always draw beziers.
@@ -703,10 +715,10 @@ fn runCharstring(cff_data: *const CffData, glyph: GlyphIndex, ctx: *CharstringCt
 
                 // push immediate
                 const f: f32 = if (b0 == 255)
-                    @floatFromInt(@as(i32, @intCast(b.get32() / 0x10000)))
+                    @floatFromInt(@as(i32, @intCast((try b.get32()) / 0x10000)))
                 else blk: {
                     b.cursor -= 1;
-                    break :blk @floatFromInt(@as(i16, @truncate(@as(i32, @bitCast(b.cffInt())))));
+                    break :blk @floatFromInt(@as(i16, @truncate(@as(i32, @bitCast(try b.cffInt())))));
                 };
                 // std.log.debug("f {d:.2}", .{f});
                 if (sp >= 48) return error.PushStackOverflow;
@@ -720,32 +732,51 @@ fn runCharstring(cff_data: *const CffData, glyph: GlyphIndex, ctx: *CharstringCt
     return error.NoEndChar;
 }
 
-fn getGlyphSubrs(cff_data: *const CffData, glyph: GlyphIndex) Buf {
-    var fdselector: u32 = std.math.maxInt(u32);
-    var fdselect = cff_data.fdselect;
-    // std.log.debug("getGlyphSubrs fdselect {}", .{fdselect});
-    fdselect.seek(0);
-
-    const fmt = fdselect.get8();
-    if (fmt == 0) {
-        // untested
-        fdselect.skip(@backingInt(glyph));
-        fdselector = fdselect.get8();
-    } else if (fmt == 3) {
-        const nranges = fdselect.get16();
-        var start = fdselect.get16();
-        for (0..nranges) |_| {
-            const v = fdselect.get8();
-            const end = fdselect.get16();
-            const glyph_int = @backingInt(glyph);
-            if (glyph_int >= start and glyph_int < end) {
-                fdselector = v;
-                break;
+fn validateFdSelect(source: Buf, glyph_count: u16, dict_count: u16) ParseError!void {
+    var b = source;
+    const format = try b.get8();
+    switch (format) {
+        0 => for (0..glyph_count) |_| {
+            if (try b.get8() >= dict_count) return error.InvalidCffData;
+        },
+        3 => {
+            const count = try b.get16();
+            var first = try b.get16();
+            if (count == 0 or first != 0) return error.InvalidCffData;
+            for (0..count) |_| {
+                const dict = try b.get8();
+                const end = try b.get16();
+                if (dict >= dict_count or end <= first or end > glyph_count) return error.InvalidCffData;
+                first = end;
             }
-            start = end;
-        }
+            if (first != glyph_count) return error.InvalidCffData;
+        },
+        else => return error.InvalidCffData,
     }
-    // what was this line? it does nothing. why was it in the original c code?
-    // if (fdselector == -1) new_buf(NULL, 0);
-    return cff_data.cff.getSubrs(cff_data.fontdicts.cffIndexGet(@fromBackingInt(@intCast(fdselector))));
+}
+
+fn getGlyphSubrs(cff_data: *const CffData, glyph: GlyphIndex) ParseError!Buf {
+    var fdselect = cff_data.fdselect;
+    const format = try fdselect.get8();
+    const selected: u16 = switch (format) {
+        0 => blk: {
+            try fdselect.skip(@backingInt(glyph));
+            break :blk try fdselect.get8();
+        },
+        3 => blk: {
+            const count = try fdselect.get16();
+            var first = try fdselect.get16();
+            for (0..count) |_| {
+                const dict = try fdselect.get8();
+                const end = try fdselect.get16();
+                if (end <= first) return error.InvalidCffData;
+                if (@backingInt(glyph) >= first and @backingInt(glyph) < end) break :blk dict;
+                first = end;
+            }
+            return error.InvalidCffData;
+        },
+        else => return error.InvalidCffData,
+    };
+    const dict = try cff_data.fontdicts.cffIndexGet(@fromBackingInt(selected));
+    return cff_data.cff.getSubrs(dict);
 }

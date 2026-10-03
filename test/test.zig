@@ -491,4 +491,5 @@ test {
     _ = @import("cmap.zig");
     _ = @import("workspace.zig");
     _ = @import("allocation.zig");
+    _ = @import("cff.zig");
 }
