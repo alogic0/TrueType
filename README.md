@@ -117,6 +117,10 @@ These are requested allocation sizes, not allocator size classes or process RSS.
 Loading costs, cold workspace growth, and workloads with different glyphs or
 scales need separate measurements.
 
+The extended [workload report](benchmarks/WORKLOADS.md) separates cold rendering,
+text, changing sizes, complex glyphs, and instrumented stage diagnostics. Run
+`zig build bench-workloads -Doptimize=ReleaseFast` to reproduce it.
+
 ## Features and Limitations
 
 See the [support and test matrix](docs/SUPPORT.md) for exact scope and ownership

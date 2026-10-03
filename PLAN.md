@@ -308,11 +308,11 @@ advertised modes. “Heap-free” must name the mode and storage assumptions.
 
 ### B2 — Profile before optimizing [M]
 
-- [ ] Extend measurements to cold rendering, real text, changing sizes, and
+- [x] Extend measurements to cold rendering, real text, changing sizes, and
   difficult glyphs. Keep warm/cold results separate.
-- [ ] Measure decoding, flattening, edge processing, and coverage work to find
+- [x] Measure decoding, flattening, edge processing, and coverage work to find
   the dominant costs. Keep profiling instrumentation outside published timings.
-- [ ] Record median and spread, compiler/build settings, allocator, CPU, glyph
+- [x] Record median and spread, compiler/build settings, allocator, CPU, glyph
   selection, output equivalence, and retained/peak requested memory.
 - [ ] Optimize one measured bottleneck per commit, then compare against the saved
   baseline under the same workload and build settings.
@@ -675,3 +675,15 @@ and the next unresolved dependency.
   Validation: ten targeted CID/cmap tests plus test discovery passed in Debug and
   ReleaseSafe. Manifest-only consumer execution and packaged examples passed
   with the new documentation/license files included.
+
+- B2 profiling slice: added cold text, warm text, mixed-size, and high-vertex
+  workloads with seven uninstrumented timing samples, separate allocation
+  accounting, and output equivalence checks. A separate stage profiler measures
+  decoding/flattening/edge/coverage costs; production specialization has no clock
+  callbacks. `benchmarks/WORKLOADS.md` records CPU, configuration, medians/spread,
+  memory, and limitations. All warm workloads made zero backing calls. CFF's
+  repeated bounds interpretation is a measured optimization candidate; no broad
+  workspace speedup or cache redesign is inferred.
+  Validation: eleven targeted rendering/allocation/rasterizer tests passed in
+  Debug and ReleaseSafe. Both the original benchmark and the new workload/stage
+  benchmark completed with their bitmap equivalence and allocation checks.

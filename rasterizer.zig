@@ -83,7 +83,7 @@ pub fn rasterizeWithLimits(
     defer windings.deinit(gpa);
     const area = @as(u64, result.w) * result.h;
     if (area != 0 and windings.points.len > limits.max_raster_work / area) return error.ResourceLimitExceeded;
-    try rasterizeInner(gpa, result, windings.points, windings.contour_lengths, scale_x, scale_y, shift_x, shift_y, off_x, off_y, invert);
+    try rasterizeInner(gpa, result, windings.points, windings.contour_lengths, scale_x, scale_y, shift_x, shift_y, off_x, off_y, invert, {});
 }
 
 const Edge = struct {
@@ -113,6 +113,7 @@ fn rasterizeInner(
     off_x: i32,
     off_y: i32,
     invert: bool,
+    observer: anytype,
 ) Allocator.Error!void {
     const y_scale_inv: f32 = if (invert) -scale_y else scale_y;
 
@@ -161,6 +162,7 @@ fn rasterizeInner(
     std.mem.sortUnstable(Edge, e[0..n], Edge.Sort{}, Edge.Sort.lessThan);
 
     // now, traverse the scanlines and find the intersections on each scanline, use xor winding rule
+    if (@TypeOf(observer) != void) observer.edgesDone();
     try rasterizeSortedEdges(gpa, result, e[0 .. n + 1], off_x, off_y);
 }
 
@@ -747,4 +749,34 @@ fn handleClippedEdge(
         // coverage = 1 - average x position
         scanline[x] += e.direction * (y1 - y0) * (1 - ((x0 - xf) + (x1 - xf)) / 2);
     }
+}
+
+/// Development-only stage profiler. Production rendering specializes its
+/// observer to void and contains no clock reads or profiling callbacks.
+pub const StageTimes = struct { flatten_ns: i96, edges_ns: i96, coverage_ns: i96 };
+const Observer = struct {
+    io: std.Io,
+    start: std.Io.Timestamp,
+    edge_ns: i96 = 0,
+    fn edgesDone(self: *Observer) void {
+        const now = std.Io.Clock.awake.now(self.io);
+        self.edge_ns = self.start.durationTo(now).toNanoseconds();
+        self.start = now;
+    }
+};
+
+pub fn profileStages(io: std.Io, gpa: Allocator, result: *Bitmap, vertices: []Vertex, scale: f32, off_x: i32, off_y: i32) !StageTimes {
+    const start = std.Io.Clock.awake.now(io);
+    var windings = try flattenCurves(gpa, vertices, 0.35 / scale, (Limits{}).max_flattened_points);
+    defer windings.deinit(gpa);
+    const flattened = std.Io.Clock.awake.now(io);
+    const area = @as(u64, result.w) * result.h;
+    if (area != 0 and windings.points.len > (Limits{}).max_raster_work / area) return error.ResourceLimitExceeded;
+    var observer: Observer = .{ .io = io, .start = flattened };
+    try rasterizeInner(gpa, result, windings.points, windings.contour_lengths, scale, scale, 0, 0, off_x, off_y, true, &observer);
+    return .{
+        .flatten_ns = start.durationTo(flattened).toNanoseconds(),
+        .edges_ns = observer.edge_ns,
+        .coverage_ns = observer.start.durationTo(std.Io.Clock.awake.now(io)).toNanoseconds(),
+    };
 }

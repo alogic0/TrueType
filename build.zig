@@ -99,6 +99,18 @@ pub fn build(b: *std.Build) void {
     run_example.addPassthruArgs();
     b.step("example", "Render a glyph: zig build example -- path/to/font.ttf").dependOn(&run_example.step);
 
+    const workloads = b.addExecutable(.{
+        .name = "truetype-workloads",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("benchmark_workloads.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const run_workloads = b.addRunArtifact(workloads);
+    run_workloads.has_side_effects = true;
+    b.step("bench-workloads", "Measure cold/text/mixed-size/complex workloads and separate stages").dependOn(&run_workloads.step);
+
     const benchmark = b.addExecutable(.{
         .name = "truetype-benchmark",
         .root_module = b.createModule(.{
