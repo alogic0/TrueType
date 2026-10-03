@@ -1,7 +1,6 @@
 const std = @import("std");
 const readInt = std.mem.readInt;
 const Allocator = std.mem.Allocator;
-const assert = std.debug.assert;
 const ArrayList = std.ArrayListUnmanaged;
 
 const TrueType = @This();
@@ -11,6 +10,7 @@ const cmap = @import("cmap.zig");
 const CffData = cff.CffData;
 const sfnt = @import("sfnt.zig");
 const Reader = @import("reader.zig");
+const metrics = @import("metrics.zig");
 const kerning = @import("kerning.zig");
 
 table_offsets: [sfnt.table_count]u32,
@@ -152,7 +152,7 @@ pub const GlyphBitmap = struct {
     };
 };
 
-pub const GlyphBitmapError = cff.GlyphShapeError || Reader.Error || error{InvalidCompositeGlyph};
+pub const GlyphBitmapError = cff.GlyphShapeError || Reader.Error || error{ InvalidCompositeGlyph, InvalidRenderParameters, BitmapTooLarge };
 pub const CharstringCtx = cff.CharstringCtx;
 
 pub const RasterizerWorkspace = rasterizer.Workspace;
@@ -232,17 +232,19 @@ fn glyphBitmapSubpixelInner(
     shift_x: f32,
     shift_y: f32,
 ) GlyphBitmapError!GlyphBitmap {
+    try validateRenderParameters(scale_x, scale_y, shift_x, shift_y);
     const vertices = try glyphShape(tt, scratch, glyph);
     defer scratch.free(vertices);
     if (vertices.len == 0) return .empty;
 
-    assert(scale_x != 0);
-    assert(scale_y != 0);
-
-    const box = glyphBitmapBoxSubpixel(tt, glyph, scale_x, scale_y, shift_x, shift_y);
-
-    const w: u32 = @intCast(box.x1 - box.x0);
-    const h: u32 = @intCast(box.y1 - box.y0);
+    const box = try glyphBitmapBoxSubpixelChecked(tt, glyph, scale_x, scale_y, shift_x, shift_y);
+    const wide_w = @as(i64, box.x1) - box.x0;
+    const wide_h = @as(i64, box.y1) - box.y0;
+    if (wide_w < 0 or wide_h < 0 or wide_w > 65535 or wide_h > 65535 or
+        box.x0 < -32768 or box.x0 > 32767 or box.y0 < -32768 or box.y0 > 32767)
+        return error.BitmapTooLarge;
+    const w: u32 = @intCast(wide_w);
+    const h: u32 = @intCast(wide_h);
 
     if (w == 0 or h == 0) return .empty;
 
@@ -264,57 +266,40 @@ fn glyphBitmapSubpixelInner(
     };
 }
 
+/// Returns zero for invalid height or malformed metrics; use the checked variant
+/// to distinguish these conditions. Height must be finite and strictly positive.
 pub fn scaleForPixelHeight(tt: *const TrueType, height: f32) f32 {
-    const vm = tt.verticalMetrics();
-    const fheight: f32 = @floatFromInt(vm.ascent - vm.descent);
-    return height / fheight;
+    return tt.scaleForPixelHeightChecked(height) catch 0;
 }
 
-pub const VerticalMetrics = struct {
-    /// The coordinate above the baseline the font extends.
-    ascent: i16,
-    /// The coordinate below the baseline the font extends (typically negative).
-    descent: i16,
-    /// The spacing between one row's descent and the next row's ascent.
-    line_gap: i16,
-};
+pub fn scaleForPixelHeightChecked(tt: *const TrueType, height: f32) GlyphBitmapError!f32 {
+    if (!std.math.isFinite(height) or height <= 0) return error.InvalidRenderParameters;
+    const vm = try tt.verticalMetricsChecked();
+    const fheight: f32 = @floatFromInt(@as(i32, vm.ascent) - vm.descent);
+    const result = height / fheight;
+    if (result == 0) return error.InvalidRenderParameters;
+    return result;
+}
 
-/// A typical expression for advancing the vertical position is
-/// `ascent - descent + line_gap`. These are expressed in unscaled coordinates,
-/// which are typically then multiplied by the scale factor for a given font size.
+pub const VerticalMetrics = metrics.Vertical;
+pub const HMetrics = metrics.Horizontal;
+
+/// Unscaled font units. Widen to i32 before subtracting ascent and descent.
+/// Malformed data returns zero metrics; the checked variant reports the error.
 pub fn verticalMetrics(tt: *const TrueType) VerticalMetrics {
-    const bytes = tt.ttf_bytes;
-    const hhea = tt.table_offsets[@backingInt(TableId.hhea)];
-    return .{
-        .ascent = readInt(i16, bytes[hhea + 4 ..][0..2], .big),
-        .descent = readInt(i16, bytes[hhea + 6 ..][0..2], .big),
-        .line_gap = readInt(i16, bytes[hhea + 8 ..][0..2], .big),
-    };
+    return tt.verticalMetricsChecked() catch .{ .ascent = 0, .descent = 0, .line_gap = 0 };
 }
 
-pub const HMetrics = struct {
-    /// The offset from the current horizontal position to the next horizontal
-    /// position in unscaled coordinates.
-    advance_width: i16,
-    /// The offset from the current horizontal position to the left edge of the
-    /// character in unscaled coordinates.
-    left_side_bearing: i16,
-};
+pub fn verticalMetricsChecked(tt: *const TrueType) Reader.Error!VerticalMetrics {
+    return metrics.vertical(try tt.tableReader(.hhea));
+}
 
 pub fn glyphHMetrics(tt: *const TrueType, glyph: GlyphIndex) HMetrics {
-    const glyph_index: usize = @backingInt(glyph);
-    const bytes = tt.ttf_bytes;
-    const hhea = tt.table_offsets[@backingInt(TableId.hhea)];
-    const hmtx = tt.table_offsets[@backingInt(TableId.hmtx)];
-    const n_long_h_metrics = readInt(u16, bytes[hhea + 34 ..][0..2], .big);
-    if (glyph_index < n_long_h_metrics) return .{
-        .advance_width = readInt(i16, bytes[hmtx + 4 * glyph_index ..][0..2], .big),
-        .left_side_bearing = readInt(i16, bytes[hmtx + 4 * glyph_index + 2 ..][0..2], .big),
-    };
-    return .{
-        .advance_width = readInt(i16, bytes[hmtx + 4 * (n_long_h_metrics - 1) ..][0..2], .big),
-        .left_side_bearing = readInt(i16, bytes[hmtx + 4 * n_long_h_metrics + 2 * (glyph_index - n_long_h_metrics) ..][0..2], .big),
-    };
+    return tt.glyphHMetricsChecked(glyph) catch .{ .advance_width = 0, .left_side_bearing = 0 };
+}
+
+pub fn glyphHMetricsChecked(tt: *const TrueType, glyph: GlyphIndex) Reader.Error!HMetrics {
+    return metrics.horizontal(try tt.tableReader(.hhea), try tt.tableReader(.hmtx), @backingInt(glyph), tt.glyphs_len);
 }
 
 /// An additional amount to advance the horizontal coordinate between the two
@@ -677,13 +662,36 @@ pub fn glyphBitmapBoxSubpixel(
     shift_x: f32,
     shift_y: f32,
 ) BitmapBox {
-    const box = glyphBox(tt, glyph) orelse return .empty;
+    return tt.glyphBitmapBoxSubpixelChecked(glyph, scale_x, scale_y, shift_x, shift_y) catch .empty;
+}
+
+fn validateRenderParameters(sx: f32, sy: f32, dx: f32, dy: f32) error{InvalidRenderParameters}!void {
+    if (!std.math.isFinite(sx) or !std.math.isFinite(sy) or sx <= 0 or sy <= 0 or
+        !std.math.isFinite(dx) or !std.math.isFinite(dy)) return error.InvalidRenderParameters;
+}
+
+fn pixelCoordinate(value: f32) error{BitmapTooLarge}!i32 {
+    // f32 cannot represent maxInt(i32) exactly. Compare after widening.
+    if (!std.math.isFinite(value) or @as(f64, value) < -2147483648 or @as(f64, value) > 2147483647)
+        return error.BitmapTooLarge;
+    return @intFromFloat(value);
+}
+
+pub fn glyphBitmapBoxSubpixelChecked(
+    tt: *const TrueType,
+    glyph: GlyphIndex,
+    scale_x: f32,
+    scale_y: f32,
+    shift_x: f32,
+    shift_y: f32,
+) GlyphBitmapError!BitmapBox {
+    try validateRenderParameters(scale_x, scale_y, shift_x, shift_y);
+    const box = try tt.glyphBoxChecked(glyph) orelse return .empty;
     return .{
-        // move to integral bboxes (treating pixels as little squares, what pixels get touched)?
-        .x0 = @intFromFloat(@floor(@as(f32, @floatFromInt(box.x0)) * scale_x + shift_x)),
-        .y0 = @intFromFloat(@floor(@as(f32, @floatFromInt(-box.y1)) * scale_y + shift_y)),
-        .x1 = @intFromFloat(@ceil(@as(f32, @floatFromInt(box.x1)) * scale_x + shift_x)),
-        .y1 = @intFromFloat(@ceil(@as(f32, @floatFromInt(-box.y0)) * scale_y + shift_y)),
+        .x0 = try pixelCoordinate(@floor(@as(f32, @floatFromInt(box.x0)) * scale_x + shift_x)),
+        .y0 = try pixelCoordinate(@floor(@as(f32, @floatFromInt(-box.y1)) * scale_y + shift_y)),
+        .x1 = try pixelCoordinate(@ceil(@as(f32, @floatFromInt(box.x1)) * scale_x + shift_x)),
+        .y1 = try pixelCoordinate(@ceil(@as(f32, @floatFromInt(-box.y0)) * scale_y + shift_y)),
     };
 }
 
@@ -696,23 +704,24 @@ pub fn glyphBitmapBox(
     return glyphBitmapBoxSubpixel(tt, glyph, scale_x, scale_y, 0, 0);
 }
 
-pub fn glyphBox(tt: *const TrueType, glyph: GlyphIndex) ?BitmapBox {
-    return if (tt.cff_data.cff.size != 0)
-        cff.glyphBox(&tt.cff_data, glyph)
-    else
-        tt.glyphBoxTT(glyph);
+pub fn glyphBitmapBoxChecked(tt: *const TrueType, glyph: GlyphIndex, scale_x: f32, scale_y: f32) GlyphBitmapError!BitmapBox {
+    return tt.glyphBitmapBoxSubpixelChecked(glyph, scale_x, scale_y, 0, 0);
 }
 
-fn glyphBoxTT(tt: *const TrueType, glyph: GlyphIndex) ?BitmapBox {
-    const source = glyphData(tt, glyph) catch return null;
+pub fn glyphBox(tt: *const TrueType, glyph: GlyphIndex) ?BitmapBox {
+    return tt.glyphBoxChecked(glyph) catch null;
+}
+
+/// Null denotes no outline; malformed data is an error.
+pub fn glyphBoxChecked(tt: *const TrueType, glyph: GlyphIndex) GlyphBitmapError!?BitmapBox {
+    if (tt.cff_data.cff.size != 0) return cff.glyphBoxChecked(&tt.cff_data, glyph);
+    const source = try glyphData(tt, glyph);
     if (source.bytes.len == 0) return null;
-    const bytes = source.bytes;
-    const g = 0;
     return .{
-        .x0 = readInt(i16, bytes[g + 2 ..][0..2], .big),
-        .y0 = readInt(i16, bytes[g + 4 ..][0..2], .big),
-        .x1 = readInt(i16, bytes[g + 6 ..][0..2], .big),
-        .y1 = readInt(i16, bytes[g + 8 ..][0..2], .big),
+        .x0 = try source.read(i16, 2),
+        .y0 = try source.read(i16, 4),
+        .x1 = try source.read(i16, 6),
+        .y1 = try source.read(i16, 8),
     };
 }
 

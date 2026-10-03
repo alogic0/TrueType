@@ -414,8 +414,13 @@ pub const CharstringCtx = struct {
 };
 
 pub fn glyphBox(cff_data: *const CffData, glyph: GlyphIndex) ?BitmapBox {
+    return glyphBoxChecked(cff_data, glyph) catch null;
+}
+
+pub fn glyphBoxChecked(cff_data: *const CffData, glyph: GlyphIndex) GlyphShapeError!?BitmapBox {
     var ctx = CharstringCtx.init(.{ .mode = .bounds }, undefined);
-    runCharstring(cff_data, glyph, &ctx) catch return null;
+    try runCharstring(cff_data, glyph, &ctx);
+    if (ctx.num_vertices == 0) return null;
 
     return .{
         .x0 = ctx.min_x,

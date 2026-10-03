@@ -119,6 +119,27 @@ scales need separate measurements.
   Font bytes are borrowed and must remain immutable and alive while used.
 * Untrusted font files are not supported; table-internal validation is still in progress.
 
+## Checked queries and render inputs
+
+`verticalMetricsChecked`, `glyphHMetricsChecked`, `scaleForPixelHeightChecked`,
+`glyphBoxChecked`, `glyphBitmapBoxChecked`, and `glyphBitmapBoxSubpixelChecked`
+report errors. Their convenience counterparts return zero metrics/scale, null,
+or an empty pixel box on failure. A checked outline box returns null for an
+empty outline, including an empty CFF charstring. Mapping and kerning checked
+variants follow the same error-reporting policy.
+
+Scales and requested pixel heights must be finite and strictly positive; shifts
+must be finite. Invalid parameters return `InvalidRenderParameters` even for
+empty glyphs. Pixel boxes must fit `i32`; rendered dimensions must fit `u16` and
+origin offsets must fit `i16`, otherwise rendering returns `BitmapTooLarge`.
+Empty outlines append no pixels. Errors leave the existing pixel list unchanged
+and the workspace reusable. Allocation failure returns `OutOfMemory`.
+
+**Migration:** `HMetrics.advance_width` is now `u16`, matching the unsigned hmtx
+record. Widen metrics to `i32` before signed layout arithmetic; ascent minus
+descent can exceed `i16`. Font objects should be constructed with `load`; their
+borrowed bytes must remain immutable for their entire lifetime.
+
 ## Roadmap
 
 See [PLAN.md](PLAN.md) for the implementation sequence, commit-sized slices,

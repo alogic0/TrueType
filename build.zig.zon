@@ -12,6 +12,7 @@
         "reader.zig",
         "sfnt.zig",
         "kerning.zig",
+        "metrics.zig",
         "cff.zig",
         "type2.zig",
         "cmap.zig",

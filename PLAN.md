@@ -159,9 +159,9 @@ defines the directory and table ranges used by this work.
   endpoints, instructions, flag repeats, coordinate streams, and component data.
 - [x] Apply the same approach to character maps, variation maps, legacy kerning,
   GPOS lookups, coverage tables, and class definitions.
-- [ ] Validate cross-table relationships, including CFF CharStrings counts and
+- [x] Validate cross-table relationships, including CFF CharStrings counts and
   declared glyph counts, without inventing fallback values for malformed data.
-- [ ] Decide whether existing non-error-returning queries rely on validation at
+- [x] Decide whether existing non-error-returning queries rely on validation at
   load time or gain checked variants. Keep this policy consistent across modules.
 
 **Done when:** every supported public operation reads through a validated span,
@@ -209,14 +209,14 @@ Dependencies: Q1–Q3; Q4 should run continuously as coverage grows.
 
 ### A1 — Public input and error contracts [M]
 
-- [ ] Define supported scales, shifts, glyph indices, and pixel dimensions.
+- [x] Define supported scales, shifts, glyph indices, and pixel dimensions.
   Explicitly decide behavior for zero, negative, non-finite, and extreme values.
-- [ ] Check bitmap dimensions and byte-count multiplication before allocation.
+- [x] Check bitmap dimensions and byte-count multiplication before allocation.
 - [ ] Distinguish missing glyphs, empty outlines, unsupported features, malformed
   data, exhausted memory, and exceeded resource limits where callers need it.
-- [ ] Preserve pre-existing output pixels on failed renders and leave workspaces
+- [x] Preserve pre-existing output pixels on failed renders and leave workspaces
   reusable after failure.
-- [ ] Decide how checked bounding-box queries report malformed glyphs; currently
+- [x] Decide how checked bounding-box queries report malformed glyphs; currently
   an optional box can hide a parsing failure as an absent box.
 
 **Exit evidence:** table-driven parameter tests, error-path tests, and public
@@ -254,7 +254,7 @@ Refactor where the preceding changes reveal a coherent responsibility:
 
 - [ ] Extract TrueType outlines from the public facade once bounded table views
   provide a stable interface.
-- [ ] Extract metrics/kerning when their checked reads are established.
+- [x] Extract metrics/kerning when their checked reads are established.
 - [ ] Keep helpers with their owning module; avoid a general utility module that
   obscures which table or allocation a function owns.
 - [ ] Remove or repurpose the currently unused `debug-todo` build option with a
@@ -585,3 +585,15 @@ and the next unresolved dependency.
   covered by regression tests.
   Validation: 53 font/API tests passed in Debug and ReleaseSafe, plus three
   unchanged cached rasterizer tests (56 tests across both roots).
+
+- Q3/A1 checked-query slice: extracted bounded metrics into `metrics.zig`, added
+  checked metric/scale/outline/pixel-box queries, and documented convenience
+  fallbacks. Horizontal advances now preserve the full unsigned u16 range;
+  vertical scale arithmetic widens before subtraction. Rendering validates
+  finite positive scales and finite shifts, checks pixel-box/dimension/offset
+  representations before allocating, and preserves caller output on errors.
+  Empty CFF bounds now return null consistently with empty TrueType outlines.
+  Regression tests cover metric extremes, truncated metrics, invalid glyphs,
+  non-finite/negative/zero parameters, oversized bitmaps, and workspace recovery.
+  Validation: 56 font/API tests passed in Debug and ReleaseSafe, plus three
+  unchanged cached rasterizer tests (59 tests across both roots).
