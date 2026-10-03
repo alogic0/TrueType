@@ -8,6 +8,7 @@
         "LICENSE",
         "README.md",
         "TrueType.zig",
+        "cff.zig",
         "glyph.zig",
         "rasterizer.zig",
         "build.zig",
