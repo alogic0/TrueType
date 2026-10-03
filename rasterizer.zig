@@ -231,8 +231,10 @@ fn flattenCurves(
     }
     try contour_lengths.append(gpa, @intCast(points.items.len - start));
 
+    const owned_points = try points.toOwnedSlice(gpa);
+    errdefer gpa.free(owned_points);
     return .{
-        .points = try points.toOwnedSlice(gpa),
+        .points = owned_points,
         .contour_lengths = try contour_lengths.toOwnedSlice(gpa),
     };
 }

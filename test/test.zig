@@ -490,4 +490,5 @@ test {
     _ = @import("composite.zig");
     _ = @import("cmap.zig");
     _ = @import("workspace.zig");
+    _ = @import("allocation.zig");
 }
