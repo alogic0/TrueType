@@ -73,6 +73,7 @@ pub fn load(bytes: []const u8) LoadError!TrueType {
         const format = try cmap_table.read(u16, relative);
         const offset = cmap_offset + relative;
         if (platform == @backingInt(PlatformId.unicode) and encoding == 5 and format == 14) {
+            try cmap.validate(cmap_table.bytes, relative);
             variation_map = offset;
             continue;
         }
@@ -81,7 +82,10 @@ pub fn load(bytes: []const u8) LoadError!TrueType {
                 (encoding == @backingInt(MicrosoftEncodingId.unicode_bmp) or encoding == @backingInt(MicrosoftEncodingId.unicode_full)));
         if (!supported_platform) continue;
         switch (format) {
-            0, 2, 4, 6, 8, 10, 12, 13 => index_map = offset,
+            0, 2, 4, 6, 8, 10, 12, 13 => {
+                try cmap.validate(cmap_table.bytes, relative);
+                index_map = offset;
+            },
             else => {},
         }
     }
@@ -102,14 +106,33 @@ pub fn load(bytes: []const u8) LoadError!TrueType {
 }
 
 pub fn codepointGlyphIndex(tt: *const TrueType, codepoint: u21) GlyphIndex {
-    return cmap.glyphIndex(tt.ttf_bytes, tt.index_map, codepoint);
+    return tt.codepointGlyphIndexChecked(codepoint) catch .notdef;
 }
 
 /// Returns null when the font does not support this variation sequence.
 /// Default sequences use the base character map; explicit mappings may differ.
 pub fn codepointVariationGlyphIndex(tt: *const TrueType, codepoint: u21, selector: u21) ?GlyphIndex {
+    return tt.codepointVariationGlyphIndexChecked(codepoint, selector) catch null;
+}
+
+/// Checked lookup distinguishes malformed data from an unmapped codepoint.
+pub fn codepointGlyphIndexChecked(tt: *const TrueType, codepoint: u21) Reader.Error!GlyphIndex {
+    const source = try tt.tableReader(.cmap);
+    const start = tt.table_offsets[@backingInt(TableId.cmap)];
+    if (tt.index_map < start) return error.InvalidFontData;
+    const result = try cmap.glyphIndex(source.bytes, tt.index_map - start, codepoint);
+    if (@backingInt(result) >= tt.glyphs_len) return error.InvalidFontData;
+    return result;
+}
+
+pub fn codepointVariationGlyphIndexChecked(tt: *const TrueType, codepoint: u21, selector: u21) Reader.Error!?GlyphIndex {
     if (tt.variation_map == 0) return null;
-    return cmap.variationGlyphIndex(tt.ttf_bytes, tt.variation_map, codepoint, selector, tt.codepointGlyphIndex(codepoint));
+    const source = try tt.tableReader(.cmap);
+    const start = tt.table_offsets[@backingInt(TableId.cmap)];
+    if (tt.variation_map < start) return error.InvalidFontData;
+    const result = try cmap.variationGlyphIndex(source.bytes, tt.variation_map - start, codepoint, selector, try tt.codepointGlyphIndexChecked(codepoint));
+    if (result) |glyph| if (@backingInt(glyph) >= tt.glyphs_len) return error.InvalidFontData;
+    return result;
 }
 
 pub const GlyphBitmap = struct {

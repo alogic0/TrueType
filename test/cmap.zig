@@ -7,7 +7,7 @@ fn put(comptime T: type, bytes: []u8, offset: usize, value: T) void {
 }
 
 fn font(bytes: []const u8) TrueType {
-    return .{
+    var result: TrueType = .{
         .table_offsets = @splat(0),
         .ttf_bytes = bytes,
         .index_map = 0,
@@ -15,6 +15,8 @@ fn font(bytes: []const u8) TrueType {
         .glyphs_len = 65536,
         .cff_data = .empty,
     };
+    result.table_lengths[@backingInt(TrueType.TableId.cmap)] = @intCast(bytes.len);
+    return result;
 }
 
 fn mapped(tt: TrueType, cp: u21) u16 {
@@ -172,4 +174,56 @@ test "cmap selection includes record zero and separates variations" {
     try expectEqual(base.index_map, with_variations.index_map);
     try expectEqual(original.len, with_variations.variation_map);
     try expectEqual(null, with_variations.codepointVariationGlyphIndex(0x41, 0xfe0f));
+}
+
+test "cmap checked queries reject truncated arrays and out of range glyph IDs" {
+    var bytes: [28]u8 = @splat(0);
+    put(u16, &bytes, 0, 12);
+    put(u32, &bytes, 4, bytes.len);
+    put(u32, &bytes, 12, 1);
+    put(u32, &bytes, 16, 0x41);
+    put(u32, &bytes, 20, 0x41);
+    put(u32, &bytes, 24, 3);
+    for (0..bytes.len) |length| {
+        const tt = font(bytes[0..length]);
+        try std.testing.expectError(error.EndOfStream, tt.codepointGlyphIndexChecked(0x41));
+        try expectEqual(0, mapped(tt, 0x41));
+    }
+    var tt = font(&bytes);
+    try expectEqual(3, @backingInt(try tt.codepointGlyphIndexChecked(0x41)));
+    put(u32, &bytes, 12, 0xffffffff);
+    try std.testing.expectError(error.EndOfStream, tt.codepointGlyphIndexChecked(0x41));
+    put(u32, &bytes, 12, 1);
+    tt.glyphs_len = 3;
+    try std.testing.expectError(error.InvalidFontData, tt.codepointGlyphIndexChecked(0x41));
+}
+
+test "cmap format 4 ignores search hints and stays in its declared subtable" {
+    var bytes: [38]u8 = @splat(0);
+    for ([_]u16{ 4, 36, 0, 4, 0xffff, 0xffff, 0xffff, 0x42, 0xffff, 0, 0x41, 0xffff, 0, 1, 4, 0, 2, 0 }, 0..) |word, i|
+        put(u16, &bytes, 2 * i, word);
+    const tt = font(&bytes);
+    try expectEqual(2, mapped(tt, 0x41));
+    put(u16, &bytes, 28, 8); // points to padding after this subtable
+    try std.testing.expectError(error.EndOfStream, tt.codepointGlyphIndexChecked(0x41));
+    put(u16, &bytes, 28, 0xfffe);
+    try std.testing.expectError(error.EndOfStream, tt.codepointGlyphIndexChecked(0x41));
+}
+
+test "cmap variation queries bound nested counts and offsets" {
+    var bytes: [64]u8 = @splat(0);
+    for ([_]u16{ 6, 12, 0, 0x41, 1, 3 }, 0..) |word, i| put(u16, &bytes, 2 * i, word);
+    const uv = bytes[12..];
+    put(u16, uv, 0, 14);
+    put(u32, uv, 2, 21);
+    put(u32, uv, 6, 1);
+    std.mem.writeInt(u24, uv[10..13], 0xfe0f, .big);
+    put(u32, uv, 17, 21); // next record is outside the declared format 14 span
+    var tt = font(&bytes);
+    tt.variation_map = 12;
+    try std.testing.expectError(error.EndOfStream, tt.codepointVariationGlyphIndexChecked(0x41, 0xfe0f));
+    try expectEqual(null, tt.codepointVariationGlyphIndex(0x41, 0xfe0f));
+    put(u32, uv, 17, 0);
+    put(u32, uv, 6, 0xffffffff);
+    try std.testing.expectError(error.EndOfStream, tt.codepointVariationGlyphIndexChecked(0x41, 0xfe0f));
 }

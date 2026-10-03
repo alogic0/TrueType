@@ -94,6 +94,8 @@ scales need separate measurements.
 
 * Codepoint to glyph lookup (cmap formats 0, 2, 4, 6, 8, 10, 12, and 13)
 * Unicode variation-sequence lookup (format 14) via `codepointVariationGlyphIndex`
+* `codepointGlyphIndexChecked` and `codepointVariationGlyphIndexChecked` report
+  malformed mapping data; convenience lookups return `.notdef` or null on errors.
 * Glyph rendering to bitmap
 * CFF fixed-point operands retain signed fractions internally; exported integer
   outline vertices truncate toward zero. Out-of-range coordinates return

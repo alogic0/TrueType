@@ -11,8 +11,9 @@ pub fn span(self: Reader, offset: usize, length: usize) Error![]const u8 {
 }
 
 pub fn read(self: Reader, comptime T: type, offset: usize) Error!T {
-    const bytes = try self.span(offset, @sizeOf(T));
-    return std.mem.readInt(T, bytes[0..@sizeOf(T)], .big);
+    const width = @bitSizeOf(T) / 8;
+    const bytes = try self.span(offset, width);
+    return std.mem.readInt(T, bytes[0..width], .big);
 }
 
 pub fn tail(self: Reader, offset: usize) Error!Reader {

@@ -561,3 +561,17 @@ and the next unresolved dependency.
   construct fonts with `load`, not fill implementation fields manually.
   Validation: 48 font/API tests passed in Debug and ReleaseSafe, plus three
   unchanged cached rasterizer tests (51 tests across both roots).
+
+- Q3 cmap slice: load-time validation checks subtable lengths, sorted ranges,
+  nested records, and format-specific array spans. Lookup reads are bounded to
+  each subtable; format 4 derives its search from segment counts instead of
+  trusting search hints. Added `codepointGlyphIndexChecked` and
+  `codepointVariationGlyphIndexChecked`; convenience APIs return `.notdef`/null
+  on errors, while checked variants distinguish malformed data and reject
+  out-of-range glyph IDs. The shared reader handles encoded 24-bit values as
+  three bytes. Tests cover truncated arrays, huge counts, escaped offsets,
+  malformed search hints, and checked/convenience error behavior.
+  Validation: 51 font/API tests passed in Debug and ReleaseSafe, plus three
+  unchanged cached rasterizer tests (54 tests across both roots). A new huge-count
+  regression exposed a remaining format-14 arithmetic overflow during this slice;
+  the final implementation checks record extent before searching.
