@@ -140,6 +140,29 @@ record. Widen metrics to `i32` before signed layout arithmetic; ascent minus
 descent can exceed `i16`. Font objects should be constructed with `load`; their
 borrowed bytes must remain immutable for their entire lifetime.
 
+## Resource budgets
+
+`font.withLimits(.{ .max_bitmap_pixels = 1024 * 1024 })` returns a copy of the
+borrowed font view with customized per-operation budgets. Other fields retain
+these defaults; zero allows none of the corresponding work:
+
+| Limit | Default | Accounting |
+| --- | ---: | --- |
+| `max_charstring_instructions` | 1,000,000 | Tokens per CFF interpretation pass, including subroutine calls |
+| `max_outline_vertices` | 131,072 | CFF vertices, or aggregate TrueType vertex capacity and composite assembly work |
+| `max_components` | 4,096 | TrueType glyph visits, including repeated or empty children |
+| `max_flattened_points` | 262,144 | Points after subdivision; also bounds edges and contours |
+| `max_bitmap_pixels` | 16,777,216 | Bytes appended by one render |
+| `max_raster_work` | 1,000,000,000 | Conservative product of flattened points and bitmap pixels |
+
+Exhaustion returns `ResourceLimitExceeded`. TrueType and CFF recursion retain
+separate fixed depth guards (64 and 10); subdivision beyond depth 16 also returns
+an error. Budgets bound work, not exact allocator overhead. Use fixed-buffer
+allocators to impose a strict memory budget. Larger limits permit more work;
+they cannot expand the public integer coordinate/dimension representations.
+Load validates only the selected base/variation cmap, and caps nested format-14
+mapping validation at 1,000,000 records to bound shared-map amplification.
+
 ## Roadmap
 
 See [PLAN.md](PLAN.md) for the implementation sequence, commit-sized slices,

@@ -124,3 +124,13 @@ test "rasterizer clipped edges match analytic triangle coverage" {
         }
     }
 }
+
+test "rasterizer subdivision exhaustion is an error instead of a dropped endpoint" {
+    var vertices = [_]Vertex{
+        vertex(.vmove, 0, 0, 0, 0, 0, 0),
+        vertex(.vcurve, 32767, 0, 0, 32767, 0, 0),
+    };
+    var storage: [1]u8 = @splat(0);
+    var bitmap: rasterizer.Bitmap = .{ .w = 1, .h = 1, .stride = 1, .pixels = &storage };
+    try std.testing.expectError(error.ResourceLimitExceeded, rasterizer.rasterize(std.testing.allocator, &bitmap, 0, &vertices, 1, 1, 0, 0, 0, 0, false));
+}

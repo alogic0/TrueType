@@ -263,3 +263,22 @@ test "TrueType validates location intervals coordinate sums and component instru
     const composite_tt = try font(&font_w, &.{ data, comp });
     try std.testing.expectError(error.EndOfStream, composite_tt.glyphShape(gpa, @fromBackingInt(1)));
 }
+
+test "composite budgets count repeated empty children and assembly work" {
+    var comp_buf: [128]u8 = undefined;
+    var comp_w: std.Io.Writer = .fixed(&comp_buf);
+    const comp = try composite(&comp_w, &.{
+        .{ .glyph = 0, .flags = 3, .a = 0, .b = 0 },
+        .{ .glyph = 0, .flags = 3, .a = 0, .b = 0 },
+        .{ .glyph = 0, .flags = 3, .a = 0, .b = 0 },
+    });
+    var font_buf: [512]u8 = undefined;
+    var font_w: std.Io.Writer = .fixed(&font_buf);
+    const tt = try font(&font_w, &.{ &.{}, comp });
+    const limited = tt.withLimits(.{ .max_components = 3 });
+    try std.testing.expectError(error.ResourceLimitExceeded, limited.glyphShape(gpa, @fromBackingInt(1)));
+    const accepted = tt.withLimits(.{ .max_components = 4 });
+    const shape = try accepted.glyphShape(gpa, @fromBackingInt(1));
+    defer gpa.free(shape);
+    try expectEqual(@as(usize, 0), shape.len);
+}

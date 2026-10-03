@@ -212,7 +212,7 @@ Dependencies: Q1–Q3; Q4 should run continuously as coverage grows.
 - [x] Define supported scales, shifts, glyph indices, and pixel dimensions.
   Explicitly decide behavior for zero, negative, non-finite, and extreme values.
 - [x] Check bitmap dimensions and byte-count multiplication before allocation.
-- [ ] Distinguish missing glyphs, empty outlines, unsupported features, malformed
+- [x] Distinguish missing glyphs, empty outlines, unsupported features, malformed
   data, exhausted memory, and exceeded resource limits where callers need it.
 - [x] Preserve pre-existing output pixels on failed renders and leave workspaces
   reusable after failure.
@@ -224,14 +224,14 @@ API documentation covering each outcome.
 
 ### A2 — Resource limits and numeric behavior [M]
 
-- [ ] Retain recursion guards and add total-work limits where shallow but repeated
+- [x] Retain recursion guards and add total-work limits where shallow but repeated
   calls/components can still expand excessively.
-- [ ] Bound interpreter instructions, emitted vertices, contour/edge counts, and
+- [x] Bound interpreter instructions, emitted vertices, contour/edge counts, and
   requested bitmap memory using a coherent limits policy.
-- [ ] Audit integer accumulation, float-to-integer conversion, transformed bounds,
+- [x] Audit integer accumulation, float-to-integer conversion, transformed bounds,
   and extreme curve subdivision. Preserve endpoints at subdivision limits or
   return a defined error.
-- [ ] Test that limits terminate excessive inputs while allowing the representative
+- [x] Test that limits terminate excessive inputs while allowing the representative
   valid-font corpus. Document defaults and any caller overrides.
 
 **Exit evidence:** deterministic tests for recursion, expansion, arithmetic
@@ -494,7 +494,8 @@ behavior and failures; a larger number alone is not evidence of broader coverage
 7. Select D, E, or a later extension based on the next concrete rendering or
    typography requirement. Keep those releases independently usable.
 
-**Next implementation slice:** Q3, font directory and metric validation.
+**Next implementation slice:** Q4, bounded fuzz targets and deterministic replay.
+Q1–Q3 and A1–A2 are implemented; broader corpus and release review remain pending.
 
 For every completed slice, append a short record here or link its commit with:
 what changed, the regression/acceptance evidence, any public behavior change,
@@ -597,3 +598,15 @@ and the next unresolved dependency.
   non-finite/negative/zero parameters, oversized bitmaps, and workspace recovery.
   Validation: 56 font/API tests passed in Debug and ReleaseSafe, plus three
   unchanged cached rasterizer tests (59 tests across both roots).
+
+- A2 resource-limit slice: added `Limits` and `withLimits` to bound CFF tokens,
+  aggregate outline construction, composite visits, flattened points, bitmap
+  bytes, and conservative coverage work. All interpretation passes have fresh
+  budgets; repeated shallow calls and empty children consume work. Exceeding
+  curve-subdivision depth returns an error instead of dropping endpoints.
+  Only selected cmaps receive full validation, and nested variation-map
+  validation has a fixed work cap. Tests cover exhaustion and recovery with both
+  bundled fonts, shallow CFF calls, repeated composite children, and subdivision.
+  Validation: all 63 tests passed in Debug and ReleaseSafe (59 font/API and four
+  rasterizer tests), including the existing allocation-failure and valid-font
+  differential suites.

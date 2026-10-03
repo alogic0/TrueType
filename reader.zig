@@ -1,6 +1,6 @@
 //! Checked big-endian access within an enclosing table or record.
 const std = @import("std");
-pub const Error = error{ EndOfStream, InvalidFontData };
+pub const Error = error{ EndOfStream, InvalidFontData, ResourceLimitExceeded };
 
 bytes: []const u8,
 const Reader = @This();

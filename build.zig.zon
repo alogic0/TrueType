@@ -13,6 +13,7 @@
         "sfnt.zig",
         "kerning.zig",
         "metrics.zig",
+        "limits.zig",
         "cff.zig",
         "type2.zig",
         "cmap.zig",

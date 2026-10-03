@@ -61,3 +61,42 @@ test "checked bounds distinguish malformed CFF and empty outlines" {
     try std.testing.expectEqual(@as(?TrueType.BitmapBox, null), bad.glyphBox(.notdef));
     try std.testing.expectError(error.RLineToStack, bad.glyphBitmapBoxChecked(.notdef, 1, 1));
 }
+
+test "render budgets stop geometry and coverage work and allow recovery" {
+    for ([_][]const u8{ original, @embedFile("GoNotoCurrent-Regular.ttf") }) |data| {
+        const font = try TrueType.load(data);
+        const glyph = font.codepointGlyphIndex('A');
+        const scale = font.scaleForPixelHeight(24);
+        var pixels: std.ArrayList(u8) = .empty;
+        defer pixels.deinit(std.testing.allocator);
+        try pixels.appendSlice(std.testing.allocator, &.{ 17, 23 });
+        var workspace: TrueType.RasterizerWorkspace = .init(std.testing.allocator);
+        defer workspace.deinit();
+        for ([_]TrueType.Limits{
+            .{ .max_outline_vertices = 0 },
+            .{ .max_flattened_points = 0 },
+            .{ .max_bitmap_pixels = 0 },
+            .{ .max_raster_work = 0 },
+        }) |limits| {
+            const limited = font.withLimits(limits);
+            try std.testing.expectError(error.ResourceLimitExceeded, limited.glyphBitmapWithWorkspace(std.testing.allocator, &pixels, &workspace, glyph, scale, scale));
+            try std.testing.expectEqualSlices(u8, &.{ 17, 23 }, pixels.items);
+        }
+        _ = try font.glyphBitmapWithWorkspace(std.testing.allocator, &pixels, &workspace, glyph, scale, scale);
+        try std.testing.expect(pixels.items.len > 2);
+    }
+}
+
+test "CFF budgets cover repeated shallow calls and both interpretation passes" {
+    var storage: [128]u8 = undefined;
+    var font = try @import("cff.zig").programFont(&storage, &.{ 32, 29, 32, 29, 32, 29, 14 });
+    const subr = [_]u8{ 0, 1, 1, 1, 4, 12, 0, 11 }; // dotsection, return
+    font.cff_data.gsubrs = .init(&subr, subr.len);
+    const limited = font.withLimits(.{ .max_charstring_instructions = 9 });
+    try std.testing.expectError(error.ResourceLimitExceeded, limited.glyphShape(std.testing.allocator, .notdef));
+    try std.testing.expectError(error.ResourceLimitExceeded, limited.glyphBoxChecked(.notdef));
+    const accepted = font.withLimits(.{ .max_charstring_instructions = 13 });
+    const shape = try accepted.glyphShape(std.testing.allocator, .notdef);
+    defer std.testing.allocator.free(shape);
+    try std.testing.expectEqual(@as(usize, 0), shape.len);
+}

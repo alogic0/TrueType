@@ -1,5 +1,6 @@
 //! Converts glyph outlines into anti-aliased bitmaps.
 
+const Limits = @import("limits.zig");
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
@@ -57,12 +58,31 @@ pub fn rasterize(
     off_x: i32,
     off_y: i32,
     invert: bool,
-) Allocator.Error!void {
+) (Allocator.Error || Limits.Error)!void {
+    return rasterizeWithLimits(.{}, gpa, result, flatness_in_pixels, vertices, scale_x, scale_y, shift_x, shift_y, off_x, off_y, invert);
+}
+
+pub fn rasterizeWithLimits(
+    limits: Limits,
+    gpa: Allocator,
+    result: *Bitmap,
+    flatness_in_pixels: f32,
+    vertices: []Vertex,
+    scale_x: f32,
+    scale_y: f32,
+    shift_x: f32,
+    shift_y: f32,
+    off_x: i32,
+    off_y: i32,
+    invert: bool,
+) (Allocator.Error || Limits.Error)!void {
     // Bound error in both pixel axes, including unequal and reflected scales.
     // Dividing by the smaller scale would allow visible error on the larger axis.
     const scale = @max(@abs(scale_x), @abs(scale_y));
-    var windings = try flattenCurves(gpa, vertices, flatness_in_pixels / scale);
+    var windings = try flattenCurves(gpa, vertices, flatness_in_pixels / scale, limits.max_flattened_points);
     defer windings.deinit(gpa);
+    const area = @as(u64, result.w) * result.h;
+    if (area != 0 and windings.points.len > limits.max_raster_work / area) return error.ResourceLimitExceeded;
     try rasterizeInner(gpa, result, windings.points, windings.contour_lengths, scale_x, scale_y, shift_x, shift_y, off_x, off_y, invert);
 }
 
@@ -111,6 +131,7 @@ fn rasterizeInner(
     for (wcount) |wcount_elem| {
         const p: []Point = pts[m..];
         m += wcount_elem;
+        if (wcount_elem == 0) continue;
         var j: u32 = wcount_elem - 1;
         var k: u32 = 0;
         while (k < wcount_elem) : ({
@@ -168,7 +189,9 @@ fn flattenCurves(
     gpa: Allocator,
     vertices: []const Vertex,
     objspace_flatness: f32,
-) error{OutOfMemory}!FlattenedCurves {
+    max_points: u32,
+) (Allocator.Error || Limits.Error)!FlattenedCurves {
+    var remaining = @min(max_points, std.math.maxInt(u32) - 1);
     var points: ArrayList(Point) = .empty;
     defer points.deinit(gpa);
     var contour_lengths: ArrayList(u32) = .empty;
@@ -192,12 +215,13 @@ fn flattenCurves(
             .vline => {
                 x = @floatFromInt(v.x);
                 y = @floatFromInt(v.y);
-                try points.append(gpa, .{ .x = x, .y = y });
+                try appendPoint(gpa, &points, &remaining, .{ .x = x, .y = y });
             },
             .vcurve => {
                 try tesselateCurve(
                     gpa,
                     &points,
+                    &remaining,
                     x,
                     y,
                     @floatFromInt(v.cx),
@@ -214,6 +238,7 @@ fn flattenCurves(
                 try tesselateCubic(
                     gpa,
                     &points,
+                    &remaining,
                     x,
                     y,
                     @floatFromInt(v.cx),
@@ -241,10 +266,16 @@ fn flattenCurves(
     };
 }
 
+fn appendPoint(gpa: Allocator, points: *ArrayList(Point), remaining: *u32, point: Point) (Allocator.Error || Limits.Error)!void {
+    try Limits.consume(remaining, 1);
+    try points.append(gpa, point);
+}
+
 /// Subdivide until midpoint deviation meets the object-space error bound.
 fn tesselateCurve(
     gpa: Allocator,
     points: *ArrayList(Point),
+    remaining: *u32,
     x0: f32,
     y0: f32,
     x1: f32,
@@ -253,26 +284,26 @@ fn tesselateCurve(
     y2: f32,
     objspace_flatness_squared: f32,
     n: u32,
-) Allocator.Error!void {
+) (Allocator.Error || Limits.Error)!void {
     // midpoint
     const mx: f32 = (x0 + 2 * x1 + x2) / 4;
     const my: f32 = (y0 + 2 * y1 + y2) / 4;
     // versus directly drawn line
     const dx: f32 = (x0 + x2) / 2 - mx;
     const dy: f32 = (y0 + y2) / 2 - my;
-    if (n > 16) // 65536 segments on one curve better be enough!
-        return;
+    if (n > 16) return error.ResourceLimitExceeded;
     if (dx * dx + dy * dy > objspace_flatness_squared) { // half-pixel error allowed... need to be smaller if AA
-        try tesselateCurve(gpa, points, x0, y0, (x0 + x1) / 2.0, (y0 + y1) / 2.0, mx, my, objspace_flatness_squared, n + 1);
-        try tesselateCurve(gpa, points, mx, my, (x1 + x2) / 2.0, (y1 + y2) / 2.0, x2, y2, objspace_flatness_squared, n + 1);
+        try tesselateCurve(gpa, points, remaining, x0, y0, (x0 + x1) / 2.0, (y0 + y1) / 2.0, mx, my, objspace_flatness_squared, n + 1);
+        try tesselateCurve(gpa, points, remaining, mx, my, (x1 + x2) / 2.0, (y1 + y2) / 2.0, x2, y2, objspace_flatness_squared, n + 1);
     } else {
-        try points.append(gpa, .{ .x = x2, .y = y2 });
+        try appendPoint(gpa, points, remaining, .{ .x = x2, .y = y2 });
     }
 }
 
 fn tesselateCubic(
     gpa: Allocator,
     points: *ArrayList(Point),
+    remaining: *u32,
     x0: f32,
     y0: f32,
     x1: f32,
@@ -283,7 +314,7 @@ fn tesselateCubic(
     y3: f32,
     objspace_flatness_squared: f32,
     n: u32,
-) Allocator.Error!void {
+) (Allocator.Error || Limits.Error)!void {
     // According to Dougall Johnson, this "flatness" calculation is just
     // made-up nonsense that seems to work well enough.
     const dx0 = x1 - x0;
@@ -298,8 +329,7 @@ fn tesselateCubic(
     const shortlen = @sqrt(dx * dx + dy * dy);
     const flatness_squared = longlen * longlen - shortlen * shortlen;
 
-    if (n > 16) // 65536 segments on one curve better be enough!
-        return;
+    if (n > 16) return error.ResourceLimitExceeded;
 
     if (flatness_squared > objspace_flatness_squared) {
         const x01 = (x0 + x1) / 2;
@@ -317,10 +347,10 @@ fn tesselateCubic(
         const mx = (xa + xb) / 2;
         const my = (ya + yb) / 2;
 
-        try tesselateCubic(gpa, points, x0, y0, x01, y01, xa, ya, mx, my, objspace_flatness_squared, n + 1);
-        try tesselateCubic(gpa, points, mx, my, xb, yb, x23, y23, x3, y3, objspace_flatness_squared, n + 1);
+        try tesselateCubic(gpa, points, remaining, x0, y0, x01, y01, xa, ya, mx, my, objspace_flatness_squared, n + 1);
+        try tesselateCubic(gpa, points, remaining, mx, my, xb, yb, x23, y23, x3, y3, objspace_flatness_squared, n + 1);
     } else {
-        try points.append(gpa, .{ .x = x3, .y = y3 });
+        try appendPoint(gpa, points, remaining, .{ .x = x3, .y = y3 });
     }
 }
 

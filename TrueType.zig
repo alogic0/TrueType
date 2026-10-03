@@ -21,6 +21,16 @@ variation_map: u32 = 0,
 index_to_loc_format: u16,
 glyphs_len: u32,
 cff_data: CffData,
+limits: Limits = .{},
+
+pub const Limits = @import("limits.zig");
+
+/// Copies this borrowed font view with per-operation resource budgets.
+pub fn withLimits(tt: TrueType, limits: Limits) TrueType {
+    var result = tt;
+    result.limits = limits;
+    return result;
+}
 
 pub const GlyphIndex = @import("glyph.zig").GlyphIndex;
 
@@ -74,7 +84,6 @@ pub fn load(bytes: []const u8) LoadError!TrueType {
         const format = try cmap_table.read(u16, relative);
         const offset = cmap_offset + relative;
         if (platform == @backingInt(PlatformId.unicode) and encoding == 5 and format == 14) {
-            try cmap.validate(cmap_table.bytes, relative);
             variation_map = offset;
             continue;
         }
@@ -84,13 +93,14 @@ pub fn load(bytes: []const u8) LoadError!TrueType {
         if (!supported_platform) continue;
         switch (format) {
             0, 2, 4, 6, 8, 10, 12, 13 => {
-                try cmap.validate(cmap_table.bytes, relative);
                 index_map = offset;
             },
             else => {},
         }
     }
     if (index_map == 0) return error.IndexMapMissing;
+    try cmap.validate(cmap_table.bytes, index_map - cmap_offset);
+    if (variation_map != 0) try cmap.validate(cmap_table.bytes, variation_map - cmap_offset);
 
     const index_to_loc_format = metadata.location_format;
 
@@ -152,7 +162,7 @@ pub const GlyphBitmap = struct {
     };
 };
 
-pub const GlyphBitmapError = cff.GlyphShapeError || Reader.Error || error{ InvalidCompositeGlyph, InvalidRenderParameters, BitmapTooLarge };
+pub const GlyphBitmapError = cff.GlyphShapeError || Reader.Error || Limits.Error || error{ InvalidCompositeGlyph, InvalidRenderParameters, BitmapTooLarge };
 pub const CharstringCtx = cff.CharstringCtx;
 
 pub const RasterizerWorkspace = rasterizer.Workspace;
@@ -247,6 +257,7 @@ fn glyphBitmapSubpixelInner(
     const h: u32 = @intCast(wide_h);
 
     if (w == 0 or h == 0) return .empty;
+    if (@as(u64, w) * h > tt.limits.max_bitmap_pixels) return error.ResourceLimitExceeded;
 
     var gbm: rasterizer.Bitmap = .{
         .w = w,
@@ -256,7 +267,7 @@ fn glyphBitmapSubpixelInner(
     };
     errdefer pixels.shrinkRetainingCapacity(pixels.items.len - gbm.pixels.len);
 
-    try rasterizer.rasterize(scratch, &gbm, 0.35, vertices, scale_x, scale_y, shift_x, shift_y, box.x0, box.y0, true);
+    try rasterizer.rasterizeWithLimits(tt.limits, scratch, &gbm, 0.35, vertices, scale_x, scale_y, shift_x, shift_y, box.x0, box.y0, true);
 
     return .{
         .width = @intCast(gbm.w),
@@ -323,7 +334,7 @@ pub const Vertex = @import("glyph.zig").Vertex;
 
 pub fn glyphShape(tt: *const TrueType, gpa: Allocator, glyph: GlyphIndex) GlyphBitmapError![]Vertex {
     return if (tt.cff_data.cff.size != 0)
-        cff.glyphShape(&tt.cff_data, gpa, glyph)
+        cff.glyphShapeWithLimits(&tt.cff_data, gpa, glyph, tt.limits)
     else
         tt.glyphShapeTT(gpa, glyph);
 }
@@ -338,8 +349,11 @@ const OutlinePoint = struct {
 };
 
 fn glyphShapeTT(tt: *const TrueType, gpa: Allocator, glyph: GlyphIndex) GlyphBitmapError![]Vertex {
-    return glyphShapeTTInner(tt, gpa, glyph, null, 0);
+    var budget: OutlineBudget = .{ .vertices = tt.limits.max_outline_vertices, .components = tt.limits.max_components };
+    return glyphShapeTTInner(tt, gpa, glyph, null, 0, &budget);
 }
+
+const OutlineBudget = struct { vertices: u32, components: u32 };
 
 fn glyphShapeTTInner(
     tt: *const TrueType,
@@ -347,7 +361,9 @@ fn glyphShapeTTInner(
     glyph: GlyphIndex,
     outline_points: ?*ArrayList(OutlinePoint),
     depth: u32,
+    budget: *OutlineBudget,
 ) GlyphBitmapError![]Vertex {
+    try Limits.consume(&budget.components, 1);
     if (depth >= 64) return error.RecursionLimit;
     if (@backingInt(glyph) >= tt.glyphs_len) return error.InvalidCompositeGlyph;
     const source = try glyphData(tt, glyph);
@@ -377,6 +393,7 @@ fn glyphShapeTTInner(
 
         // A loose bound on how many vertices we might need.
         const m: u32 = n + 2 * n_contours;
+        try Limits.consume(&budget.vertices, m);
         try vertices.resize(gpa, m);
 
         var next_move: i32 = 0;
@@ -575,7 +592,7 @@ fn glyphShapeTTInner(
 
             var child_points: ArrayList(OutlinePoint) = .empty;
             defer child_points.deinit(gpa);
-            const comp_verts = try glyphShapeTTInner(tt, gpa, gidx, &child_points, depth + 1);
+            const comp_verts = try glyphShapeTTInner(tt, gpa, gidx, &child_points, depth + 1, budget);
             defer gpa.free(comp_verts);
 
             if (xy_values) {
@@ -605,6 +622,7 @@ fn glyphShapeTTInner(
                     v.cy = try vertexCoordinate(control.y);
                 }
             }
+            try Limits.consume(&budget.vertices, comp_verts.len + child_points.items.len);
             try vertices.appendSlice(gpa, comp_verts);
             for (child_points.items) |point| try parent_points.append(gpa, point.transform(mtx));
             more = (flags & (1 << 5)) != 0;
@@ -714,7 +732,7 @@ pub fn glyphBox(tt: *const TrueType, glyph: GlyphIndex) ?BitmapBox {
 
 /// Null denotes no outline; malformed data is an error.
 pub fn glyphBoxChecked(tt: *const TrueType, glyph: GlyphIndex) GlyphBitmapError!?BitmapBox {
-    if (tt.cff_data.cff.size != 0) return cff.glyphBoxChecked(&tt.cff_data, glyph);
+    if (tt.cff_data.cff.size != 0) return cff.glyphBoxWithLimits(&tt.cff_data, glyph, tt.limits);
     const source = try glyphData(tt, glyph);
     if (source.bytes.len == 0) return null;
     return .{

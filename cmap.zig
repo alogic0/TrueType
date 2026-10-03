@@ -270,6 +270,7 @@ pub fn validate(bytes: []const u8, offset: u32) Error!void {
         14 => {
             const count = try source.read(u32, 6);
             _ = try source.records(10, count, 11);
+            var work: u32 = 1_000_000;
             var previous: ?u24 = null;
             for (0..count) |i| {
                 const row = 10 + 11 * i;
@@ -284,6 +285,7 @@ pub fn validate(bytes: []const u8, offset: u32) Error!void {
                     const entries = try mapping.read(u32, 0);
                     const stride: usize = if (kind == 0) 4 else 5;
                     _ = try mapping.records(4, entries, stride);
+                    try @import("limits.zig").consume(&work, entries);
                     var last_end: ?u32 = null;
                     for (0..entries) |j| {
                         const at = 4 + stride * j;

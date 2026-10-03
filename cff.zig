@@ -1,6 +1,7 @@
 //! CFF font data and Type 2 charstring interpretation.
 
 const std = @import("std");
+const Limits = @import("limits.zig");
 const type2 = @import("type2.zig");
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
@@ -10,7 +11,7 @@ const BitmapBox = @import("glyph.zig").BitmapBox;
 
 pub const ParseError = error{ TruncatedCffData, InvalidCffData };
 
-pub const GlyphShapeError = ParseError || type2.Error || error{
+pub const GlyphShapeError = Limits.Error || ParseError || type2.Error || error{
     OutOfMemory,
     CoordinateOutOfRange,
     Unimplemented,
@@ -302,6 +303,7 @@ pub const CharstringCtx = struct {
     num_vertices: u32,
     vertices: [*]Vertex,
     flags: Flags,
+    limits: Limits = .{},
 
     const Flags = packed struct(u8) {
         started: bool = false,
@@ -350,6 +352,7 @@ pub const CharstringCtx = struct {
     }
 
     fn v(ctx: *CharstringCtx, ty: Vertex.Type, x_value: f64, y_value: f64, cx_value: f64, cy_value: f64, cx1_value: f64, cy1_value: f64) !void {
+        if (ctx.num_vertices >= ctx.limits.max_outline_vertices) return error.ResourceLimitExceeded;
         // Validate in both passes; bounds must describe the same integer outline.
         const x = try coordinate(x_value);
         const y = try coordinate(y_value);
@@ -418,7 +421,12 @@ pub fn glyphBox(cff_data: *const CffData, glyph: GlyphIndex) ?BitmapBox {
 }
 
 pub fn glyphBoxChecked(cff_data: *const CffData, glyph: GlyphIndex) GlyphShapeError!?BitmapBox {
+    return glyphBoxWithLimits(cff_data, glyph, .{});
+}
+
+pub fn glyphBoxWithLimits(cff_data: *const CffData, glyph: GlyphIndex, limits: Limits) GlyphShapeError!?BitmapBox {
     var ctx = CharstringCtx.init(.{ .mode = .bounds }, undefined);
+    ctx.limits = limits;
     try runCharstring(cff_data, glyph, &ctx);
     if (ctx.num_vertices == 0) return null;
 
@@ -431,13 +439,19 @@ pub fn glyphBoxChecked(cff_data: *const CffData, glyph: GlyphIndex) GlyphShapeEr
 }
 
 pub fn glyphShape(cff_data: *const CffData, gpa: Allocator, glyph: GlyphIndex) GlyphShapeError![]Vertex {
+    return glyphShapeWithLimits(cff_data, gpa, glyph, .{});
+}
+
+pub fn glyphShapeWithLimits(cff_data: *const CffData, gpa: Allocator, glyph: GlyphIndex, limits: Limits) GlyphShapeError![]Vertex {
     // mode=bounds to get bounds and num_vertices
     var count_ctx = CharstringCtx.init(.{ .mode = .bounds }, undefined);
+    count_ctx.limits = limits;
     try runCharstring(cff_data, glyph, &count_ctx);
     const vertices = try gpa.alloc(Vertex, count_ctx.num_vertices);
     errdefer gpa.free(vertices);
     // mode=verts to assign vertices
     var out_ctx = CharstringCtx.init(.{ .mode = .verts }, vertices.ptr);
+    out_ctx.limits = limits;
     try runCharstring(cff_data, glyph, &out_ctx);
     assert(out_ctx.num_vertices == count_ctx.num_vertices);
     // std.log.debug(
@@ -500,7 +514,9 @@ fn runCharstring(cff_data: *const CffData, glyph: GlyphIndex, ctx: *CharstringCt
     // this currently ignores the initial width value, which isn't needed if we have hmtx
     var b = try cff_data.charstrings.cffIndexGet(glyph);
 
+    var remaining = ctx.limits.max_charstring_instructions;
     while (b.cursor < b.size) {
+        try Limits.consume(&remaining, 1);
         var i: u32 = 0;
         clear_stack = true;
         const b0: u16 = try b.get8();
