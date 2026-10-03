@@ -62,4 +62,20 @@ pub fn build(b: *std.Build) void {
     });
     rasterizer_tests.filters = unit_tests.filters;
     test_step.dependOn(&b.addRunArtifact(rasterizer_tests).step);
+
+    const benchmark = b.addExecutable(.{
+        .name = "truetype-benchmark",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("benchmark.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+        .use_llvm = use_llvm,
+        .use_lld = use_llvm,
+    });
+    benchmark.root_module.addImport("TrueType", tt_mod);
+    const run_benchmark = b.addRunArtifact(benchmark);
+    // Timing results must be refreshed even when inputs are unchanged.
+    run_benchmark.has_side_effects = true;
+    b.step("bench", "Benchmark one-shot and workspace rendering (use -Doptimize=ReleaseFast)").dependOn(&run_benchmark.step);
 }
