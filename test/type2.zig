@@ -29,7 +29,12 @@ pub fn expectOperands(program: []const u8, expected: []const i16) !void {
 pub fn expectFailure(program: []const u8, err: anyerror) !void {
     var storage: [1024]u8 = undefined;
     const tt = try programFont(&storage, program);
-    try std.testing.expectError(err, tt.glyphShape(std.testing.allocator, @fromBackingInt(0)));
+    const shape = tt.glyphShape(std.testing.allocator, @fromBackingInt(0)) catch |actual| {
+        try std.testing.expectEqual(err, actual);
+        return;
+    };
+    std.testing.allocator.free(shape);
+    return error.TestExpectedError;
 }
 
 test "CFF Type 2 arithmetic preserves stack operands and evaluates numbers" {
@@ -127,4 +132,66 @@ test "CFF Type 2 subroutines share stack and transient storage" {
     const shape = try tt.glyphShape(std.testing.allocator, @fromBackingInt(0));
     defer std.testing.allocator.free(shape);
     try std.testing.expectEqual(15, shape[0].x);
+}
+
+test "CFF Type 2 path operators reject trailing operands" {
+    for ([_]struct { op: u8, count: usize, err: anyerror }{
+        .{ .op = 5, .count = 3, .err = error.RLineToStack },
+        .{ .op = 8, .count = 7, .err = error.RCurveToStack },
+        .{ .op = 24, .count = 9, .err = error.RCurveLineStack },
+        .{ .op = 25, .count = 9, .err = error.RLineCurveStack },
+        .{ .op = 26, .count = 6, .err = error.CurveToStack },
+        .{ .op = 27, .count = 6, .err = error.CurveToStack },
+        .{ .op = 30, .count = 6, .err = error.HCurveToStack },
+        .{ .op = 31, .count = 6, .err = error.HCurveToStack },
+    }) |case| {
+        var code: [64]u8 = undefined;
+        var w: std.Io.Writer = .fixed(&code);
+        try w.writeAll(&.{ 139, 139, 21 });
+        try w.splatByteAll(139, case.count);
+        try w.writeAll(&.{ case.op, 14 });
+        try expectFailure(w.buffered(), case.err);
+    }
+    for ([_]struct { op: u8, count: usize, err: anyerror }{
+        .{ .op = 34, .count = 8, .err = error.HFlexStack },
+        .{ .op = 35, .count = 14, .err = error.FlexStack },
+        .{ .op = 36, .count = 10, .err = error.HFlex1Stack },
+        .{ .op = 37, .count = 12, .err = error.Flex1Stack },
+    }) |case| {
+        var code: [64]u8 = undefined;
+        var w: std.Io.Writer = .fixed(&code);
+        try w.writeAll(&.{ 139, 139, 21 });
+        try w.splatByteAll(139, case.count);
+        try w.writeAll(&.{ 12, case.op, 14 });
+        try expectFailure(w.buffered(), case.err);
+    }
+}
+
+test "CFF Type 2 width is accepted only at the first width-bearing operator" {
+    for ([_][]const u8{
+        &.{ 239, 149, 159, 21, 14 },
+        &.{ 239, 139, 140, 1, 149, 159, 21, 14 },
+        &.{ 239, 139, 140, 19, 0x80, 149, 159, 21, 14 },
+    }) |code| {
+        var storage: [128]u8 = undefined;
+        const tt = try programFont(&storage, code);
+        const shape = try tt.glyphShape(std.testing.allocator, @fromBackingInt(0));
+        defer std.testing.allocator.free(shape);
+        try std.testing.expectEqual(10, shape[0].x);
+        try std.testing.expectEqual(20, shape[0].y);
+    }
+    try expectFailure(&.{ 139, 139, 21, 239, 149, 159, 21, 14 }, error.RMoveToStack);
+    try expectFailure(&.{ 139, 140, 1, 239, 149, 159, 21, 14 }, error.RMoveToStack);
+    try expectFailure(&.{ 139, 140, 1, 139, 140, 141, 3, 14 }, error.InvalidCffData);
+    try expectFailure(&.{ 19, 14 }, error.InvalidCffData);
+}
+
+test "CFF Type 2 distinguishes malformed reserved and unsupported programs" {
+    try expectFailure(&.{ 139, 139, 5, 14 }, error.InvalidCffData);
+    try expectFailure(&.{ 12, 1, 14 }, error.ReservedOperator);
+    try expectFailure(&.{ 139, 139, 139, 139, 14 }, error.UnsupportedCffSeac);
+    try expectFailure(&.{ 139, 139, 21, 139, 14 }, error.InvalidCffData);
+    try expectFailure(&.{11}, error.ReturnOutsideSubR);
+    try expectFailure(&.{ 139, 139, 21 }, error.NoEndChar);
+    try expectOperands(&.{ 144, 12, 0 }, &.{5}); // deprecated dotsection is a no-op
 }

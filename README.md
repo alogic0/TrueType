@@ -105,6 +105,10 @@ scales need separate measurements.
 * Type 2 transient storage (`put`, `get`), conditionals (`and`, `or`, `not`,
   `eq`, `ifelse`), and deterministic per-glyph `random`. Reading an unwritten
   storage slot returns `UninitializedCffStorage`.
+* Type 2 path/flex arity and hint-mask lengths are validated. Hints are parsed
+  but not applied; flex curves are rendered without flex-depth adjustment.
+  Deprecated `dotsection` is ignored; deprecated endchar composites return
+  `UnsupportedCffSeac`, and reserved operator codes return `ReservedOperator`.
 * Kerning
 * Font shaping and ligatures are not yet implemented.
 * Untrusted font files are not supported.

@@ -126,9 +126,9 @@ semantics.
   from leaking between glyphs or the bounds and outline passes.
 - [x] Define reproducible random-state initialization if `random` is supported.
   Both interpretation passes must produce consistent geometry.
-- [ ] Classify valid-but-unsupported operators separately from reserved or
+- [x] Classify valid-but-unsupported operators separately from reserved or
   malformed encodings. Keep the supported-operator list in the documentation.
-- [ ] Audit supported path operators for operand-group sizes and subroutine
+- [x] Audit supported path operators for operand-group sizes and subroutine
   behavior while adding interpreter coverage.
 
 **Done when:** each newly supported operator has an independently specified
@@ -494,7 +494,7 @@ behavior and failures; a larger number alone is not evidence of broader coverage
 7. Select D, E, or a later extension based on the next concrete rendering or
    typography requirement. Keep those releases independently usable.
 
-**Next implementation slice:** Q2, Type 2 arithmetic and stack operators.
+**Next implementation slice:** Q3, font directory and metric validation.
 
 For every completed slice, append a short record here or link its commit with:
 what changed, the regression/acceptance evidence, any public behavior change,
@@ -529,3 +529,13 @@ and the next unresolved dependency.
   random reproducibility, and subroutine stack/storage sharing.
   Validation: 39 font/API tests passed in Debug and ReleaseSafe, plus three
   unchanged cached rasterizer tests (42 tests across both roots).
+
+- Q2 arity slice: path/flex operators now require complete operand groups;
+  optional width is consumed once; drawing requires a preceding move; stem
+  counts and mask use are checked. Reserved escape codes return
+  `ReservedOperator`, deprecated dotsection is ignored, and the deprecated
+  endchar composite form returns `UnsupportedCffSeac` instead of a blank outline.
+  Tests cover excess operands, width-bearing operators, invalid masks,
+  missing endchar, return outside subroutines, and unsupported composites.
+  Validation: 42 font/API tests passed in Debug and ReleaseSafe, plus three
+  unchanged cached rasterizer tests (45 tests across both roots).

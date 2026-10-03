@@ -14,6 +14,7 @@ pub const GlyphShapeError = ParseError || type2.Error || error{
     OutOfMemory,
     CoordinateOutOfRange,
     Unimplemented,
+    UnsupportedCffSeac,
     RMoveToStack,
     VMoveToStack,
     HMoveToStack,
@@ -482,6 +483,8 @@ fn runCharstring(cff_data: *const CffData, glyph: GlyphIndex, ctx: *CharstringCt
     var state: type2.State = .init(@backingInt(glyph));
     var maskbits: u32 = 0;
     var in_header = true;
+    var width_seen = false;
+    var path_started = false;
     var has_subrs = false;
     var clear_stack = false;
     var s: [48]f64 = @splat(0); // stack
@@ -499,12 +502,20 @@ fn runCharstring(cff_data: *const CffData, glyph: GlyphIndex, ctx: *CharstringCt
         // const tag_name = if (std.meta.intToEnum(Instruction, b0)) |t| @tagName(t) else |_| "other";
         // std.log.debug("{}/{} b0 {s}/{}/0x{x} num_vertices {}", .{ b.cursor, b.size, tag_name, b0, b0, ctx.num_vertices });
 
+        if (!path_started and switch (b0) {
+            5...8, 24...27, 30, 31 => true,
+            else => false,
+        }) return error.InvalidCffData;
+
         sw: switch (b0) {
             // @TODO implement hinting
             Instruction.hintmask.asInt(), // 0x13
             Instruction.cntrmask.asInt(), // 0x14
             => {
-                if (in_header) maskbits += (sp / 2); // implicit "vstem"
+                skipWidth(&s, &sp, &width_seen, sp % 2 != 0);
+                if (sp % 2 != 0 or (!in_header and sp != 0)) return error.InvalidCffData;
+                if (in_header) maskbits += sp / 2; // implicit vstem
+                if (maskbits == 0 or maskbits > 96) return error.InvalidCffData;
                 in_header = false;
                 try b.skip((maskbits + 7) / 8);
             },
@@ -513,25 +524,34 @@ fn runCharstring(cff_data: *const CffData, glyph: GlyphIndex, ctx: *CharstringCt
             Instruction.hstemhm.asInt(), // 0x12
             Instruction.vstemhm.asInt(), // 0x17
             => {
-                maskbits += (sp / 2);
+                skipWidth(&s, &sp, &width_seen, sp % 2 != 0);
+                if (!in_header or sp < 2 or sp % 2 != 0) return error.InvalidCffData;
+                maskbits += sp / 2;
+                if (maskbits > 96) return error.InvalidCffData;
             },
             Instruction.rmoveto.asInt() => { // 0x15
                 in_header = false;
-                if (sp < 2) return error.RMoveToStack;
+                skipWidth(&s, &sp, &width_seen, sp == 3);
+                if (sp != 2) return error.RMoveToStack;
+                path_started = true;
                 try ctx.rmoveTo(s[sp - 2], s[sp - 1]);
             },
             Instruction.vmoveto.asInt() => { // 0x04
                 in_header = false;
-                if (sp < 1) return error.VMoveToStack;
+                skipWidth(&s, &sp, &width_seen, sp == 2);
+                if (sp != 1) return error.VMoveToStack;
+                path_started = true;
                 try ctx.rmoveTo(0, s[sp - 1]);
             },
             Instruction.hmoveto.asInt() => { // 0x16
                 in_header = false;
-                if (sp < 1) return error.HMoveToStack;
+                skipWidth(&s, &sp, &width_seen, sp == 2);
+                if (sp != 1) return error.HMoveToStack;
+                path_started = true;
                 try ctx.rmoveTo(s[sp - 1], 0);
             },
             Instruction.rlineto.asInt() => { // 0x05
-                if (sp < 2) return error.RLineToStack;
+                if (sp < 2 or sp % 2 != 0) return error.RLineToStack;
                 while (i + 1 < sp) : (i += 2)
                     try ctx.rlineTo(s[i], s[i + 1]);
             },
@@ -562,7 +582,7 @@ fn runCharstring(cff_data: *const CffData, glyph: GlyphIndex, ctx: *CharstringCt
                 }
             },
             Instruction.hvcurveto.asInt() => { // 0x1F
-                if (sp < 4) return error.HCurveToStack;
+                if (sp < 4 or sp % 4 > 1) return error.HCurveToStack;
                 while (true) {
                     // std.log.debug("hvcurveto i {} sp {}", .{ i, sp });
                     if (i + 3 >= sp) break;
@@ -574,7 +594,7 @@ fn runCharstring(cff_data: *const CffData, glyph: GlyphIndex, ctx: *CharstringCt
                 }
             },
             Instruction.vhcurveto.asInt() => { // 0x1E
-                if (sp < 4) return error.HCurveToStack;
+                if (sp < 4 or sp % 4 > 1) return error.HCurveToStack;
                 while (true) {
                     // std.log.debug("vhcurveto i {} sp {}", .{ i, sp });
                     if (i + 3 >= sp) break;
@@ -586,19 +606,19 @@ fn runCharstring(cff_data: *const CffData, glyph: GlyphIndex, ctx: *CharstringCt
                 }
             },
             Instruction.rrcurveto.asInt() => { // 0x08
-                if (sp < 6) return error.RCurveToStack;
+                if (sp < 6 or sp % 6 != 0) return error.RCurveToStack;
                 while (i + 5 < sp) : (i += 6)
                     try ctx.rccurveTo(s[i], s[i + 1], s[i + 2], s[i + 3], s[i + 4], s[i + 5]);
             },
             Instruction.rcurveline.asInt() => { // 0x18
-                if (sp < 8) return error.RCurveLineStack;
+                if (sp < 8 or (sp - 2) % 6 != 0) return error.RCurveLineStack;
                 while (i + 5 < sp - 2) : (i += 6)
                     try ctx.rccurveTo(s[i], s[i + 1], s[i + 2], s[i + 3], s[i + 4], s[i + 5]);
                 if (i + 1 >= sp) return error.CurveLineStack;
                 try ctx.rlineTo(s[i], s[i + 1]);
             },
             Instruction.rlinecurve.asInt() => { // 0x19
-                if (sp < 8) return error.RLineCurveStack;
+                if (sp < 8 or (sp - 6) % 2 != 0) return error.RLineCurveStack;
                 while (i + 1 < sp - 6) : (i += 2)
                     try ctx.rlineTo(s[i], s[i + 1]);
                 if (i + 5 >= sp) return error.RLineCurveStack;
@@ -607,7 +627,7 @@ fn runCharstring(cff_data: *const CffData, glyph: GlyphIndex, ctx: *CharstringCt
             Instruction.vvcurveto.asInt(), // 0x1A
             Instruction.hhcurveto.asInt(), // 0x1B
             => {
-                if (sp < 4) return error.CurveToStack;
+                if (sp < 4 or sp % 4 > 1) return error.CurveToStack;
                 var f: f64 = 0.0;
                 if (sp & 1 != 0) {
                     f = s[i];
@@ -647,6 +667,9 @@ fn runCharstring(cff_data: *const CffData, glyph: GlyphIndex, ctx: *CharstringCt
                 clear_stack = false;
             },
             Instruction.endchar.asInt() => { // 0x0E
+                skipWidth(&s, &sp, &width_seen, sp % 2 != 0);
+                if (sp == 4) return error.UnsupportedCffSeac;
+                if (sp != 0) return error.InvalidCffData;
                 try ctx.closeShape();
                 return;
             },
@@ -656,11 +679,13 @@ fn runCharstring(cff_data: *const CffData, glyph: GlyphIndex, ctx: *CharstringCt
                     clear_stack = false;
                     continue;
                 }
+                if (b1 >= 34 and b1 <= 37 and !path_started) return error.InvalidCffData;
                 switch (b1) {
+                    0 => continue, // deprecated dotsection: ignore without clearing operands
                     // @TODO These "flex" implementations ignore the flex-depth and resolution,
                     // and always draw beziers.
                     Instruction.hflex.asInt() => { // 0x22
-                        if (sp < 7) return error.HFlexStack;
+                        if (sp != 7) return error.HFlexStack;
                         const dx1 = s[0];
                         const dx2 = s[1];
                         const dy2 = s[2];
@@ -672,7 +697,7 @@ fn runCharstring(cff_data: *const CffData, glyph: GlyphIndex, ctx: *CharstringCt
                         try ctx.rccurveTo(dx4, 0, dx5, -dy2, dx6, 0);
                     },
                     Instruction.flex.asInt() => { // 0x23
-                        if (sp < 13) return error.FlexStack;
+                        if (sp != 13) return error.FlexStack;
                         const dx1 = s[0];
                         const dy1 = s[1];
                         const dx2 = s[2];
@@ -690,7 +715,7 @@ fn runCharstring(cff_data: *const CffData, glyph: GlyphIndex, ctx: *CharstringCt
                         try ctx.rccurveTo(dx4, dy4, dx5, dy5, dx6, dy6);
                     },
                     Instruction.hflex1.asInt() => { // 0x24
-                        if (sp < 9) return error.HFlex1Stack;
+                        if (sp != 9) return error.HFlex1Stack;
                         const dx1 = s[0];
                         const dy1 = s[1];
                         const dx2 = s[2];
@@ -704,7 +729,7 @@ fn runCharstring(cff_data: *const CffData, glyph: GlyphIndex, ctx: *CharstringCt
                         try ctx.rccurveTo(dx4, 0, dx5, dy5, dx6, -(dy1 + dy2 + dy5));
                     },
                     Instruction.flex1.asInt() => { // 0x25
-                        if (sp < 11) return error.Flex1Stack;
+                        if (sp != 11) return error.Flex1Stack;
                         const dx1 = s[0];
                         const dy1 = s[1];
                         const dx2 = s[2];
@@ -727,7 +752,7 @@ fn runCharstring(cff_data: *const CffData, glyph: GlyphIndex, ctx: *CharstringCt
                         try ctx.rccurveTo(dx4, dy4, dx5, dy5, dx6, dy6);
                     },
 
-                    else => return error.Unimplemented,
+                    else => return error.ReservedOperator,
                 }
             },
             else => {
@@ -800,4 +825,15 @@ fn getGlyphSubrs(cff_data: *const CffData, glyph: GlyphIndex) ParseError!Buf {
     };
     const dict = try cff_data.fontdicts.cffIndexGet(@fromBackingInt(selected));
     return cff_data.cff.getSubrs(dict);
+}
+
+// Width is optional only at the first stem, mask, move, or endchar operator.
+// OpenType horizontal metrics supply the actual advance, so discard it here.
+fn skipWidth(s: *[48]f64, sp: *u32, seen: *bool, extra: bool) void {
+    if (seen.*) return;
+    seen.* = true;
+    if (extra) {
+        std.mem.copyForwards(f64, s[0 .. sp.* - 1], s[1..sp.*]);
+        sp.* -= 1;
+    }
 }
