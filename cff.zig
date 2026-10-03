@@ -14,7 +14,6 @@ pub const ParseError = error{ TruncatedCffData, InvalidCffData };
 pub const GlyphShapeError = Limits.Error || ParseError || type2.Error || error{
     OutOfMemory,
     CoordinateOutOfRange,
-    Unimplemented,
     UnsupportedCffSeac,
     RMoveToStack,
     VMoveToStack,
@@ -291,7 +290,7 @@ const Buf = struct {
     }
 };
 
-pub const CharstringCtx = struct {
+const CharstringCtx = struct {
     first_x: f64,
     first_y: f64,
     x: f64,
@@ -331,11 +330,6 @@ pub const CharstringCtx = struct {
             .num_vertices = 0,
         };
     }
-    pub fn deinit(ctx: *CharstringCtx, alloc: Allocator) void {
-        if (ctx.flags.mode == .verts)
-            alloc.free(ctx.allVertices());
-    }
-
     fn trackVertex(ctx: *CharstringCtx, x: i32, y: i32) void {
         if (x > ctx.max_x or !ctx.flags.started) ctx.max_x = x;
         if (y > ctx.max_y or !ctx.flags.started) ctx.max_y = y;
@@ -529,7 +523,7 @@ fn runCharstring(cff_data: *const CffData, glyph: GlyphIndex, ctx: *CharstringCt
         }) return error.InvalidCffData;
 
         sw: switch (b0) {
-            // @TODO implement hinting
+            // PLAN.md milestone D: parse hints here; applying them needs a hinting design.
             Instruction.hintmask.asInt(), // 0x13
             Instruction.cntrmask.asInt(), // 0x14
             => {
@@ -703,7 +697,7 @@ fn runCharstring(cff_data: *const CffData, glyph: GlyphIndex, ctx: *CharstringCt
                 if (b1 >= 34 and b1 <= 37 and !path_started) return error.InvalidCffData;
                 switch (b1) {
                     0 => continue, // deprecated dotsection: ignore without clearing operands
-                    // @TODO These "flex" implementations ignore the flex-depth and resolution,
+                    // PLAN.md milestone D: these flex curves ignore flex-depth and resolution,
                     // and always draw beziers.
                     Instruction.hflex.asInt() => { // 0x22
                         if (sp != 7) return error.HFlexStack;

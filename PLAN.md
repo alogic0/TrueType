@@ -257,7 +257,7 @@ Refactor where the preceding changes reveal a coherent responsibility:
 - [x] Extract metrics/kerning when their checked reads are established.
 - [x] Keep helpers with their owning module; avoid a general utility module that
   obscures which table or allocation a function owns.
-- [ ] Remove or repurpose the currently unused `debug-todo` build option with a
+- [x] Remove or repurpose the currently unused `debug-todo` build option with a
   documented compatibility decision.
 
 **Exit evidence:** behavior-preserving test results and a dependency structure
@@ -351,7 +351,7 @@ Performance work may continue after release when no correctness issue remains.
   selectors, fixed-budget rendering, and error recovery.
 - [ ] Document font-byte lifetime, scratch/output ownership, thread usage,
   coordinate conventions, supported inputs, limits, and error behavior.
-- [ ] Audit public implementation details such as `CharstringCtx` and decide
+- [x] Audit public implementation details such as `CharstringCtx` and decide
   whether to support, deprecate, or internalize them before API stabilization.
 - [ ] Review package contents, reference/font licenses, versioning, changelog,
   migration notes, and toolchain support.
@@ -629,3 +629,11 @@ and the next unresolved dependency.
   seed checks plus 2,000 deterministic mutations passed.
   Full ReleaseSafe validation passed 59 font/API tests; four unchanged rasterizer
   tests were cached (63 across both roots).
+
+- A3/C2 API cleanup: removed the unused `debug-todo` option/build-options import,
+  the unsupported public `CharstringCtx` alias (including its never-compiling
+  deinit helper), and the obsolete `Unimplemented` error. Remaining CFF hinting
+  and flex-depth comments explicitly reference milestone D. Migration guidance
+  points callers to supported outline and checked-bounds APIs.
+  Validation: 20 targeted CFF/API tests plus one rasterizer-root discovery test
+  passed in Debug; 2,000 deterministic parser mutations also passed.

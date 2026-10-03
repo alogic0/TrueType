@@ -163,7 +163,6 @@ pub const GlyphBitmap = struct {
 };
 
 pub const GlyphBitmapError = cff.GlyphShapeError || Reader.Error || Limits.Error || error{ InvalidCompositeGlyph, InvalidRenderParameters, BitmapTooLarge };
-pub const CharstringCtx = cff.CharstringCtx;
 
 pub const RasterizerWorkspace = rasterizer.Workspace;
 

@@ -135,7 +135,9 @@ origin offsets must fit `i16`, otherwise rendering returns `BitmapTooLarge`.
 Empty outlines append no pixels. Errors leave the existing pixel list unchanged
 and the workspace reusable. Allocation failure returns `OutOfMemory`.
 
-**Migration:** `HMetrics.advance_width` is now `u16`, matching the unsigned hmtx
+**Migration:** the unused `-Ddebug-todo` option and implementation-only
+`CharstringCtx` alias were removed. Use `glyphShape` and `glyphBoxChecked` for
+outlines and bounds. `HMetrics.advance_width` is now `u16`, matching the unsigned hmtx
 record. Widen metrics to `i32` before signed layout arithmetic; ascent minus
 descent can exceed `i16`. Font objects should be constructed with `load`; their
 borrowed bytes must remain immutable for their entire lifetime.
