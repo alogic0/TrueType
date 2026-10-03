@@ -377,7 +377,9 @@ pub fn glyphHMetrics(tt: *const TrueType, glyph: GlyphIndex) HMetrics {
 }
 
 /// An additional amount to advance the horizontal coordinate between the two
-/// provided glyphs.
+/// provided glyphs, in font units. For GPOS, returns the first matching pair's
+/// base X advance for the first glyph. Placement, second-glyph adjustments, and
+/// device/variation deltas are not applied.
 pub fn glyphKernAdvance(tt: *const TrueType, a: GlyphIndex, b: GlyphIndex) i16 {
     const gpos = tt.table_offsets[@backingInt(TableId.GPOS)];
     if (gpos > 0) return glyphKernAdvanceGpos(tt, a, b);
@@ -422,79 +424,71 @@ fn glyphKernAdvanceGpos(tt: *const TrueType, a: GlyphIndex, b: GlyphIndex) i16 {
             const coverage_offset = readInt(u16, bytes[table + 2 ..][0..2], .big);
             const coverage_index = coverageIndex(bytes, table + coverage_offset, a) orelse continue;
 
+            // ValueRecord fields are optional, ordered by their ValueFormat bits.
+            // https://learn.microsoft.com/en-us/typography/opentype/spec/gpos#value-record
+            if (pos_format != 1 and pos_format != 2) return 0;
+            const value_format_1 = readInt(u16, bytes[table + 4 ..][0..2], .big);
+            const value_format_2 = readInt(u16, bytes[table + 6 ..][0..2], .big);
+            if ((value_format_1 | value_format_2) & 0xff00 != 0) return 0; // reserved bits
+            const value_record_pair_size: u32 = 2 * (@as(u32, @popCount(value_format_1)) + @as(u32, @popCount(value_format_2)));
+
             switch (pos_format) {
                 1 => {
-                    const value_format_1 = readInt(u16, bytes[table + 4 ..][0..2], .big);
-                    const value_format_2 = readInt(u16, bytes[table + 6 ..][0..2], .big);
-                    if (value_format_1 == 4 and value_format_2 == 0) {
-                        const value_record_pair_size_in_bytes = 2;
-                        const pair_set_count = readInt(u16, bytes[table + 8 ..][0..2], .big);
-                        const pair_pos_offset = readInt(u16, bytes[table + 10 + 2 * coverage_index ..][0..2], .big);
-                        const pair_value_table = table + pair_pos_offset;
-                        const pair_value_count = readInt(u16, bytes[pair_value_table..][0..2], .big);
-                        const pair_value_array = pair_value_table + 2;
+                    const pair_set_count = readInt(u16, bytes[table + 8 ..][0..2], .big);
+                    if (coverage_index >= pair_set_count) return 0;
+                    const pair_pos_offset = readInt(u16, bytes[table + 10 + 2 * coverage_index ..][0..2], .big);
+                    const pair_value_table = table + pair_pos_offset;
+                    const pair_value_count = readInt(u16, bytes[pair_value_table..][0..2], .big);
+                    const pair_value_array = pair_value_table + 2;
 
-                        if (coverage_index >= pair_set_count) return 0;
+                    const needle = @backingInt(b);
+                    var r: u32 = pair_value_count;
+                    var l: u32 = 0;
 
-                        const needle = @backingInt(b);
-                        var r: u32 = pair_value_count - 1;
-                        var l: u32 = 0;
-
-                        // Binary search.
-                        while (l <= r) {
-                            const m = (l + r) >> 1;
-                            const pair_value = pair_value_array + (2 + value_record_pair_size_in_bytes) * m;
-                            const second_glyph = readInt(u16, bytes[pair_value..][0..2], .big);
-                            const straw = second_glyph;
-                            if (needle < straw) {
-                                if (m == 0) break;
-                                r = m - 1;
-                            } else if (needle > straw) {
-                                l = m + 1;
-                            } else {
-                                return readInt(i16, bytes[pair_value + 2 ..][0..2], .big);
-                            }
+                    // Half-open bounds also handle empty pair sets.
+                    while (l < r) {
+                        const m = l + (r - l) / 2;
+                        const pair_value = pair_value_array + (2 + value_record_pair_size) * m;
+                        const second_glyph = readInt(u16, bytes[pair_value..][0..2], .big);
+                        if (needle < second_glyph) {
+                            r = m;
+                        } else if (needle > second_glyph) {
+                            l = m + 1;
+                        } else {
+                            return gposXAdvance(bytes, pair_value + 2, value_format_1);
                         }
-                    } else {
-                        // https://codeberg.org/andrewrk/TrueType/issues/48
-                        if (debug_todo) @panic("TODO implement more glyphKernAdvanceGpos");
-                        return 0;
                     }
                 },
                 2 => {
-                    const value_format_1 = readInt(u16, bytes[table + 4 ..][0..2], .big);
-                    const value_format_2 = readInt(u16, bytes[table + 6 ..][0..2], .big);
-                    if (value_format_1 == 4 and value_format_2 == 0) {
-                        const class_def10_offset = readInt(u16, bytes[table + 8 ..][0..2], .big);
-                        const class_def20_offset = readInt(u16, bytes[table + 10 ..][0..2], .big);
-                        const glyph1class = glyphClass(bytes, table + class_def10_offset, a);
-                        const glyph2class = glyphClass(bytes, table + class_def20_offset, b);
+                    const class_def10_offset = readInt(u16, bytes[table + 8 ..][0..2], .big);
+                    const class_def20_offset = readInt(u16, bytes[table + 10 ..][0..2], .big);
+                    const glyph1class = glyphClass(bytes, table + class_def10_offset, a);
+                    const glyph2class = glyphClass(bytes, table + class_def20_offset, b);
 
-                        const class1_count = readInt(u16, bytes[table + 12 ..][0..2], .big);
-                        const class2_count = readInt(u16, bytes[table + 14 ..][0..2], .big);
+                    const class1_count = readInt(u16, bytes[table + 12 ..][0..2], .big);
+                    const class2_count = readInt(u16, bytes[table + 14 ..][0..2], .big);
 
-                        if (glyph1class >= class1_count) return 0; // malformed
-                        if (glyph2class >= class2_count) return 0; // malformed
+                    if (glyph1class >= class1_count) return 0; // malformed
+                    if (glyph2class >= class2_count) return 0; // malformed
 
-                        const class1_records = table + 16;
-                        const class2_records = class1_records + 2 * (glyph1class * class2_count);
-                        return readInt(i16, bytes[class2_records + 2 * glyph2class ..][0..2], .big);
-                    } else {
-                        // https://codeberg.org/andrewrk/TrueType/issues/48
-                        if (debug_todo) @panic("TODO implement more glyphKernAdvanceGpos");
-                        return 0;
-                    }
+                    const record = table + 16 + value_record_pair_size * (glyph1class * class2_count + glyph2class);
+                    return gposXAdvance(bytes, record, value_format_1);
                 },
-                else => {
-                    // https://codeberg.org/andrewrk/TrueType/issues/48
-                    if (debug_todo) @panic("TODO implement more glyphKernAdvanceGpos");
-                    return 0;
-                },
+                else => unreachable,
             }
         }
     }
 
     return 0;
+}
+
+/// The scalar kerning API returns the first glyph's base horizontal advance.
+/// Placement, vertical advance, second-glyph adjustments, and device/variation
+/// deltas require a positioning API with additional context and are not applied.
+fn gposXAdvance(bytes: []const u8, record: u32, value_format: u16) i16 {
+    if (value_format & 0x0004 == 0) return 0;
+    const offset: u32 = 2 * @as(u32, @popCount(value_format & 0x0003));
+    return readInt(i16, bytes[record + offset ..][0..2], .big);
 }
 
 fn glyphKernAdvanceKern(tt: *const TrueType, a: GlyphIndex, b: GlyphIndex) i16 {

@@ -2519,12 +2519,19 @@ static stbtt_int32 stbtt__GetGlyphGPOSInfoAdvance(const stbtt_fontinfo *info, in
       stbtt_uint16 lookupType = ttUSHORT(lookupTable);
       stbtt_uint16 subTableCount = ttUSHORT(lookupTable + 4);
       stbtt_uint8 *subTableOffsets = lookupTable + 6;
-      if (lookupType != 2) // Pair Adjustment Positioning Subtable
+      // Local test-reference extension: the Zig implementation also supports
+      // PairPos subtables wrapped in a type 9 extension lookup.
+      if (lookupType != 2 && lookupType != 9)
          continue;
 
       for (sti=0; sti<subTableCount; sti++) {
          stbtt_uint16 subtableOffset = ttUSHORT(subTableOffsets + 2 * sti);
          stbtt_uint8 *table = lookupTable + subtableOffset;
+         if (lookupType == 9) {
+            if (ttUSHORT(table) != 1 || ttUSHORT(table + 2) != 2)
+               continue;
+            table += ttULONG(table + 4);
+         }
          stbtt_uint16 posFormat = ttUSHORT(table);
          stbtt_uint16 coverageOffset = ttUSHORT(table + 2);
          stbtt_int32 coverageIndex = stbtt__GetCoverageIndex(table + coverageOffset, glyph1);

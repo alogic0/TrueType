@@ -94,10 +94,63 @@ test "glyph h metrics" {
     }
 }
 
+/// stb only reads advance-only GPOS records. The bundled Noto font also uses
+/// xPlacement + xAdvance (ValueFormat 5). Compact those records in a separate
+/// copy for the reference reader, preserving every pair's base X advance.
+/// This leaves the original font under test untouched. Hand-written GPOS
+/// fixtures below independently verify fields and record strides.
+fn normalizeStbKerning(tt: *const TrueType, normalized: []u8) void {
+    const bytes = tt.ttf_bytes;
+    const gpos = tt.table_offsets[@backingInt(TrueType.TableId.GPOS)];
+    if (gpos == 0) return;
+    const lookup_list = gpos + readU16(bytes, gpos + 8);
+    for (0..readU16(bytes, lookup_list)) |i| {
+        const lookup = lookup_list + readU16(bytes, lookup_list + 2 + 2 * i);
+        const kind = readU16(bytes, lookup);
+        if (kind != 2 and kind != 9) continue;
+        for (0..readU16(bytes, lookup + 4)) |j| {
+            var table = lookup + readU16(bytes, lookup + 6 + 2 * j);
+            if (kind == 9) {
+                if (readU16(bytes, table) != 1 or readU16(bytes, table + 2) != 2) continue;
+                table += std.mem.readInt(u32, bytes[table + 4 ..][0..4], .big);
+            }
+            if (readU16(bytes, table + 4) != 5 or readU16(bytes, table + 6) != 0) continue;
+            switch (readU16(bytes, table)) {
+                1 => {
+                    for (0..readU16(bytes, table + 8)) |p| {
+                        const pair_set = table + readU16(bytes, table + 10 + 2 * p);
+                        for (0..readU16(bytes, pair_set)) |r| {
+                            const source = pair_set + 2 + 6 * r;
+                            const dest = pair_set + 2 + 4 * r;
+                            @memcpy(normalized[dest..][0..2], bytes[source..][0..2]); // secondGlyph
+                            @memcpy(normalized[dest + 2 ..][0..2], bytes[source + 4 ..][0..2]); // xAdvance
+                        }
+                    }
+                },
+                2 => {
+                    const record_count = @as(usize, readU16(bytes, table + 12)) * readU16(bytes, table + 14);
+                    for (0..record_count) |r| {
+                        @memcpy(normalized[table + 16 + 2 * r ..][0..2], bytes[table + 16 + 4 * r + 2 ..][0..2]);
+                    }
+                },
+                else => continue,
+            }
+            std.mem.writeInt(u16, normalized[table + 4 ..][0..2], 4, .big);
+        }
+    }
+}
+
+fn readU16(bytes: []const u8, offset: usize) u16 {
+    return std.mem.readInt(u16, bytes[offset..][0..2], .big);
+}
+
 fn testKernAdvance(ttf_data: []const u8) !void {
     const ttf = try TrueType.load(ttf_data);
+    const stb_data = try std.testing.allocator.dupe(u8, ttf_data);
+    defer std.testing.allocator.free(stb_data);
+    normalizeStbKerning(&ttf, stb_data);
     var stb_font: c.stbtt_fontinfo = undefined;
-    try expect(c.stbtt_InitFont(&stb_font, ttf_data.ptr, 0) != 0);
+    try expect(c.stbtt_InitFont(&stb_font, stb_data.ptr, 0) != 0);
     try expectEqualInts(stb_font.numGlyphs, ttf.glyphs_len);
 
     // I tested this with every combination of pairs once and it fully passed,
@@ -112,6 +165,7 @@ fn testKernAdvance(ttf_data: []const u8) !void {
         //if (b == 0) std.debug.print("glyph_index={d}/{d}\n", .{ a * ttf.glyphs_len + b, ttf.glyphs_len * ttf.glyphs_len });
         const stb_answer = c.stbtt_GetGlyphKernAdvance(&stb_font, @intCast(a), @intCast(b));
         const zig_answer = ttf.glyphKernAdvance(@fromBackingInt(@intCast(a)), @fromBackingInt(@intCast(b)));
+        if (stb_answer != zig_answer) std.debug.print("kerning pair: {d}, {d}\n", .{ a, b });
         try expectEqual(stb_answer, zig_answer);
     }
 }
@@ -191,6 +245,123 @@ test "kern table lookup" {
         try expectEqual(0, kernAdvance(&ttf, 9, 3)); // between pairs
         try expectEqual(0, kernAdvance(&ttf, 0xffff, 0xffff)); // after the last pair
         try expectEqual(0, kernAdvance(&ttf, 0, 0)); // before the first pair
+    }
+}
+
+/// A minimal GPOS table with one pair-positioning lookup. Offsets in `pair_words`
+/// are relative to the PairPos subtable, including when wrapped in an extension.
+fn writeGposOnlyFont(w: *std.Io.Writer, pair_words: []const u16, extension: bool) !TrueType {
+    const header = [_]u16{
+        0, 0, // keep the GPOS offset nonzero
+        1, 0, 0, 0, 10, // GPOS 1.0; LookupList follows the header
+        1, 4, // one lookup
+        if (extension) 9 else 2, 0, 1, 8, // one subtable
+    };
+    for (header) |word| try w.writeInt(u16, word, .big);
+    if (extension) {
+        for ([_]u16{ 1, 2, 0, 8 }) |word| try w.writeInt(u16, word, .big);
+    }
+    for (pair_words) |word| try w.writeInt(u16, word, .big);
+    var ttf: TrueType = .{
+        .table_offsets = @splat(0),
+        .ttf_bytes = w.buffered(),
+        .index_map = 0,
+        .index_to_loc_format = 0,
+        .glyphs_len = 0,
+        .cff_data = .empty,
+    };
+    ttf.table_offsets[@backingInt(TrueType.TableId.GPOS)] = 4;
+    return ttf;
+}
+
+test "GPOS pair records with placement and second-glyph adjustments" {
+    for ([_]bool{ false, true }) |extension| {
+        var buffer: [128]u8 = undefined;
+        var w: std.Io.Writer = .fixed(&buffer);
+        const ttf = try writeGposOnlyFont(&w, &.{
+            1, 12, 0x000f, 0x0005, 1, 18, // PairPos format 1
+            1, 1, 5, // coverage: glyph 5
+            3, // three sorted pairs; negative advances are encoded as int16
+            7, 11, 12, 0xffec, 14, 21, 100, // -20
+            9, 15, 16, 0xffe2, 18, 25, 200, // -30
+            300, 19, 20, 40, 22, 29, 300, // +40
+        }, extension);
+        try expectEqual(-20, kernAdvance(&ttf, 5, 7));
+        try expectEqual(-30, kernAdvance(&ttf, 5, 9));
+        try expectEqual(40, kernAdvance(&ttf, 5, 300));
+        try expectEqual(0, kernAdvance(&ttf, 5, 0));
+        try expectEqual(0, kernAdvance(&ttf, 5, 8));
+        try expectEqual(0, kernAdvance(&ttf, 5, 0xffff));
+        try expectEqual(0, kernAdvance(&ttf, 6, 7));
+    }
+}
+
+test "GPOS class records with variable size" {
+    for ([_]bool{ false, true }) |extension| {
+        var buffer: [128]u8 = undefined;
+        var w: std.Io.Writer = .fixed(&buffer);
+        const ttf = try writeGposOnlyFont(&w, &.{
+            2, 40, 0x0006, 0x0001, 46, 54, 2, 2, // PairPos format 2
+            // Each record contains yPlacement, xAdvance, second xPlacement.
+            11, 0, 21, // class (0, 0)
+            12, 0xfffd, 22, // class (0, 1): -3
+            13, 0xfff9, 23, // class (1, 0): -7
+            14, 0xffec, 24, // class (1, 1): -20
+            1, 1, 5, // coverage: glyph 5
+            1, 5, 1, 1, // class definition 1: glyph 5 -> class 1
+            1, 7, 1, 1, // class definition 2: glyph 7 -> class 1
+        }, extension);
+        try expectEqual(-20, kernAdvance(&ttf, 5, 7));
+        try expectEqual(-7, kernAdvance(&ttf, 5, 8));
+        try expectEqual(0, kernAdvance(&ttf, 6, 7));
+    }
+}
+
+test "GPOS optional value fields" {
+    // Exercise every defined ValueFormat combination, including device offsets,
+    // no X advance, and empty ValueRecords. Two pairs expose incorrect strides.
+    for (0..256) |format| {
+        var pair_buffer: [128]u8 = undefined;
+        var pair_writer: std.Io.Writer = .fixed(&pair_buffer);
+        const header = [_]u16{ 1, 12, @intCast(format), @intCast(format), 1, 18, 1, 1, 5, 2 };
+        for (header) |word| try pair_writer.writeInt(u16, word, .big);
+        for ([_]u16{ 7, 9 }) |second| {
+            try pair_writer.writeInt(u16, second, .big);
+            for ([_][8]i16{
+                .{ 11, 12, -20, 14, 0, 0, 0, 0 },
+                .{ 21, 22, 100, 24, 0, 0, 0, 0 },
+            }) |values| {
+                for (values, 0..) |value, bit| {
+                    if (format & (@as(usize, 1) << @intCast(bit)) != 0)
+                        try pair_writer.writeInt(i16, value, .big);
+                }
+            }
+        }
+        var words: [64]u16 = undefined;
+        const word_count = pair_writer.buffered().len / 2;
+        for (words[0..word_count], 0..) |*word, i|
+            word.* = std.mem.readInt(u16, pair_writer.buffered()[i * 2 ..][0..2], .big);
+        var buffer: [160]u8 = undefined;
+        var w: std.Io.Writer = .fixed(&buffer);
+        const ttf = try writeGposOnlyFont(&w, words[0..word_count], false);
+        const expected: i16 = if (format & 4 != 0) -20 else 0;
+        try expectEqual(expected, kernAdvance(&ttf, 5, 7));
+        try expectEqual(expected, kernAdvance(&ttf, 5, 9));
+    }
+}
+
+test "GPOS empty pairs and unsupported formats" {
+    for ([_]u16{ 1, 3 }) |pos_format| {
+        var buffer: [64]u8 = undefined;
+        var w: std.Io.Writer = .fixed(&buffer);
+        const ttf = try writeGposOnlyFont(&w, &.{ pos_format, 12, 4, 0, 1, 18, 1, 1, 5, 0 }, false);
+        try expectEqual(0, kernAdvance(&ttf, 5, 7));
+    }
+    {
+        var buffer: [64]u8 = undefined;
+        var w: std.Io.Writer = .fixed(&buffer);
+        const ttf = try writeGposOnlyFont(&w, &.{ 1, 12, 0xff04, 0, 1, 18, 1, 1, 5, 1, 7, 0xffec }, false);
+        try expectEqual(0, kernAdvance(&ttf, 5, 7));
     }
 }
 
