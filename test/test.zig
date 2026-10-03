@@ -492,4 +492,5 @@ test {
     _ = @import("workspace.zig");
     _ = @import("allocation.zig");
     _ = @import("cff.zig");
+    _ = @import("type2.zig");
 }

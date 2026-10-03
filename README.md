@@ -98,6 +98,10 @@ scales need separate measurements.
 * CFF fixed-point operands retain signed fractions internally; exported integer
   outline vertices truncate toward zero. Out-of-range coordinates return
   `CoordinateOutOfRange`.
+* CFF Type 2 arithmetic and stack operators: `abs`, `add`, `sub`, `div`,
+  `neg`, `drop`, `mul`, `sqrt`, `dup`, `exch`, `index`, and `roll`.
+  Invalid arithmetic domains or indices return `InvalidCffOperand`; non-finite
+  arithmetic results return `CffNumericOverflow`.
 * Kerning
 * Font shaping and ligatures are not yet implemented.
 * Untrusted font files are not supported.

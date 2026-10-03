@@ -1,6 +1,7 @@
 //! CFF font data and Type 2 charstring interpretation.
 
 const std = @import("std");
+const type2 = @import("type2.zig");
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 const GlyphIndex = @import("glyph.zig").GlyphIndex;
@@ -9,7 +10,7 @@ const BitmapBox = @import("glyph.zig").BitmapBox;
 
 pub const ParseError = error{ TruncatedCffData, InvalidCffData };
 
-pub const GlyphShapeError = ParseError || error{
+pub const GlyphShapeError = ParseError || type2.Error || error{
     OutOfMemory,
     CoordinateOutOfRange,
     Unimplemented,
@@ -630,7 +631,7 @@ fn runCharstring(cff_data: *const CffData, glyph: GlyphIndex, ctx: *CharstringCt
             },
             Instruction.callgsubr.asInt() => { // 0x1D
                 sp = std.math.sub(u32, sp, 1) catch return error.CallGSubRStack;
-                const v: i32 = @intFromFloat(@trunc(s[sp]));
+                const v = try type2.integer(s[sp]);
                 subr_stack.appendBounded(b) catch return error.RecursionLimit;
                 b = try (if (b0 == Instruction.callsubr.asInt()) // 0x0A
                     subrs
@@ -650,6 +651,10 @@ fn runCharstring(cff_data: *const CffData, glyph: GlyphIndex, ctx: *CharstringCt
             },
             Instruction.twoByteEscape.asInt() => { // 0x0C
                 const b1 = try b.get8();
+                if (try type2.arithmetic(b1, &s, &sp)) {
+                    clear_stack = false;
+                    continue;
+                }
                 switch (b1) {
                     // @TODO These "flex" implementations ignore the flex-depth and resolution,
                     // and always draw beziers.

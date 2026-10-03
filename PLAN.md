@@ -120,8 +120,8 @@ to inventory arithmetic, stack, storage, and conditional operators. Implement
 these in cohesive groups rather than adding isolated switch cases without stack
 semantics.
 
-- [ ] Add arithmetic operations with explicit operand-count and result checks.
-- [ ] Add stack manipulation with underflow, overflow, and index validation.
+- [x] Add arithmetic operations with explicit operand-count and result checks.
+- [x] Add stack manipulation with underflow, overflow, and index validation.
 - [ ] Add per-glyph transient storage and conditional operations; prevent state
   from leaking between glyphs or the bounds and outline passes.
 - [ ] Define reproducible random-state initialization if `random` is supported.
@@ -511,3 +511,12 @@ and the next unresolved dependency.
   implementation type should migrate to `glyphShape` and `glyphBox`.
   Validation: 34 font/API tests passed in Debug and ReleaseSafe; the three
   rasterizer tests remained cached and unchanged (37 tests across both roots).
+
+- Q2 arithmetic/stack slice: implemented `abs`, `add`, `sub`, `div`, `neg`,
+  `drop`, `mul`, `sqrt`, `dup`, `exch`, `index`, and `roll` in `type2.zig`.
+  Invalid numeric domains/indices return `InvalidCffOperand`; non-finite results
+  return `CffNumericOverflow`. Subroutine indices now require checked integers.
+  Independent charstring fixtures cover results, preserved operands, signed
+  rotation, fractions, stack overflow/underflow, and arithmetic overflow.
+  Validation: 36 font/API tests passed in Debug and ReleaseSafe; three unchanged
+  rasterizer tests remained cached (39 tests across both roots).
