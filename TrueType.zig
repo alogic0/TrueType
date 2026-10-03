@@ -10,6 +10,7 @@ const cff = @import("cff.zig");
 const cmap = @import("cmap.zig");
 const CffData = cff.CffData;
 const sfnt = @import("sfnt.zig");
+const Reader = @import("reader.zig");
 
 table_offsets: [sfnt.table_count]u32,
 table_lengths: [sfnt.table_count]u32 = @splat(0),
@@ -127,7 +128,7 @@ pub const GlyphBitmap = struct {
     };
 };
 
-pub const GlyphBitmapError = cff.GlyphShapeError || error{InvalidCompositeGlyph};
+pub const GlyphBitmapError = cff.GlyphShapeError || Reader.Error || error{InvalidCompositeGlyph};
 pub const CharstringCtx = cff.CharstringCtx;
 
 pub const RasterizerWorkspace = rasterizer.Workspace;
@@ -469,19 +470,30 @@ fn glyphShapeTTInner(
 ) GlyphBitmapError![]Vertex {
     if (depth >= 64) return error.RecursionLimit;
     if (@backingInt(glyph) >= tt.glyphs_len) return error.InvalidCompositeGlyph;
-    const bytes = tt.ttf_bytes;
-    const g = glyfOffset(tt, glyph) orelse return &.{};
+    const source = try glyphData(tt, glyph);
+    const bytes = source.bytes;
+    if (bytes.len == 0) return &.{};
+    const g: u32 = 0;
     var vertices: ArrayList(Vertex) = .empty;
     defer vertices.deinit(gpa);
-    const n_contours_signed = readInt(i16, bytes[g..][0..2], .big);
+    const n_contours_signed = try source.read(i16, 0);
+    if (n_contours_signed < -1) return error.InvalidFontData;
 
     if (n_contours_signed > 0) {
         const n_contours: u16 = @intCast(n_contours_signed);
         const contours_end_pts: u32 = g + 10;
-        const ins: i32 = readInt(u16, bytes[g + 10 + n_contours * 2 ..][0..2], .big);
-        var points: u32 = @intCast(g + 10 + @as(i64, n_contours) * 2 + 2 + ins);
-
-        const n: u32 = 1 + readInt(u16, bytes[contours_end_pts + n_contours * 2 - 2 ..][0..2], .big);
+        _ = try source.records(contours_end_pts, n_contours, 2);
+        var previous: ?u16 = null;
+        for (0..n_contours) |contour| {
+            const end = try source.read(u16, contours_end_pts + contour * 2);
+            if (previous) |last| if (end <= last) return error.InvalidFontData;
+            previous = end;
+        }
+        const instruction_offset: u32 = contours_end_pts + @as(u32, n_contours) * 2;
+        const instructions = try source.read(u16, instruction_offset);
+        _ = try source.span(instruction_offset + 2, instructions);
+        var points: u32 = instruction_offset + 2 + instructions;
+        const n: u32 = @as(u32, previous.?) + 1;
 
         // A loose bound on how many vertices we might need.
         const m: u32 = n + 2 * n_contours;
@@ -502,10 +514,11 @@ fn glyphShapeTTInner(
             var flags: u8 = 0;
             for (0..n) |i| {
                 if (flagcount == 0) {
-                    flags = bytes[points];
+                    flags = try source.read(u8, points);
                     points += 1;
                     if ((flags & 8) != 0) {
-                        flagcount = bytes[points];
+                        flagcount = try source.read(u8, points);
+                        if (flagcount >= n - i) return error.InvalidFontData;
                         points += 1;
                     }
                 } else {
@@ -520,16 +533,16 @@ fn glyphShapeTTInner(
         for (0..n) |i| {
             const flags = @backingInt(vertices.items[off + i].type);
             if ((flags & 2) != 0) {
-                const dx: i16 = bytes[points];
+                const dx: i16 = try source.read(u8, points);
                 points += 1;
                 x += if ((flags & 16) != 0) dx else -dx;
             } else {
                 if ((flags & 16) == 0) {
-                    x += readInt(i16, bytes[points..][0..2], .big);
+                    x += try source.read(i16, points);
                     points += 2;
                 }
             }
-            vertices.items[off + i].x = @intCast(x);
+            vertices.items[off + i].x = std.math.cast(i16, x) orelse return error.CoordinateOutOfRange;
         }
 
         // now load y coordinates
@@ -537,16 +550,16 @@ fn glyphShapeTTInner(
         for (0..n) |i| {
             const flags = @backingInt(vertices.items[off + i].type);
             if ((flags & 4) != 0) {
-                const dy: i16 = bytes[points];
+                const dy: i16 = try source.read(u8, points);
                 points += 1;
                 y += if ((flags & 32) != 0) dy else -dy;
             } else {
                 if ((flags & 32) == 0) {
-                    y += readInt(i16, bytes[points..][0..2], .big);
+                    y += try source.read(i16, points);
                     points += 2;
                 }
             }
-            vertices.items[off + i].y = @intCast(y);
+            vertices.items[off + i].y = std.math.cast(i16, y) orelse return error.CoordinateOutOfRange;
         }
 
         // Keep the original on- and off-curve point order for composite
@@ -586,7 +599,12 @@ fn glyphShapeTTInner(
                     // where we can start, and we need to save some state for when we wraparound.
                     scx = x;
                     scy = y;
-                    if ((@backingInt(vertices.items[off + i + 1].type) & 1) == 0) {
+                    const contour_end = try source.read(u16, contours_end_pts + j * 2);
+                    if (i == contour_end) {
+                        // A one-point off-curve contour must not read the next contour.
+                        sx = x;
+                        sy = y;
+                    } else if ((@backingInt(vertices.items[off + i + 1].type) & 1) == 0) {
                         // next point is also a curve point, so interpolate an on-point curve
                         sx = (x + vertices.items[off + i + 1].x) >> 1;
                         sy = (y + vertices.items[off + i + 1].y) >> 1;
@@ -603,7 +621,7 @@ fn glyphShapeTTInner(
                 vertices.items[num_vertices].set(.vmove, sx, sy, 0, 0);
                 num_vertices += 1;
                 was_off = false;
-                next_move = 1 + readInt(u16, bytes[contours_end_pts + j * 2 ..][0..2], .big);
+                next_move = 1 + try source.read(u16, contours_end_pts + j * 2);
                 j += 1;
             } else {
                 if ((flags & 1) == 0) { // if it's a curve
@@ -632,44 +650,47 @@ fn glyphShapeTTInner(
         var parent_points: ArrayList(OutlinePoint) = .empty;
         defer parent_points.deinit(gpa);
         var more = true;
+        var have_instructions = false;
         var comp = g + 10;
         while (more) {
             var mtx: [6]f32 = .{ 1, 0, 0, 1, 0, 0 };
 
-            const flags = readCursor(u16, bytes, &comp);
-            const gidx: GlyphIndex = @fromBackingInt(@intCast(readCursor(u16, bytes, &comp)));
+            const flags = try readCursor(u16, bytes, &comp);
+            if (@popCount(flags & 0xc8) > 1 or flags & 0x1800 == 0x1800) return error.InvalidCompositeGlyph;
+            have_instructions = have_instructions or flags & 0x100 != 0;
+            const gidx: GlyphIndex = @fromBackingInt(@intCast(try readCursor(u16, bytes, &comp)));
 
             var parent_point: u16 = 0;
             var child_point: u16 = 0;
             const xy_values = (flags & 2) != 0;
             if (xy_values) { // XY values
                 if ((flags & 1) != 0) { // shorts
-                    mtx[4] = @floatFromInt(readCursor(i16, bytes, &comp));
-                    mtx[5] = @floatFromInt(readCursor(i16, bytes, &comp));
+                    mtx[4] = @floatFromInt(try readCursor(i16, bytes, &comp));
+                    mtx[5] = @floatFromInt(try readCursor(i16, bytes, &comp));
                 } else {
-                    mtx[4] = @floatFromInt(readCursor(i8, bytes, &comp));
-                    mtx[5] = @floatFromInt(readCursor(i8, bytes, &comp));
+                    mtx[4] = @floatFromInt(try readCursor(i8, bytes, &comp));
+                    mtx[5] = @floatFromInt(try readCursor(i8, bytes, &comp));
                 }
             } else {
                 // Point indices are unsigned, unlike XY offsets.
-                parent_point = if (flags & 1 != 0) readCursor(u16, bytes, &comp) else readCursor(u8, bytes, &comp);
-                child_point = if (flags & 1 != 0) readCursor(u16, bytes, &comp) else readCursor(u8, bytes, &comp);
+                parent_point = if (flags & 1 != 0) try readCursor(u16, bytes, &comp) else try readCursor(u8, bytes, &comp);
+                child_point = if (flags & 1 != 0) try readCursor(u16, bytes, &comp) else try readCursor(u8, bytes, &comp);
             }
             if ((flags & (1 << 3)) != 0) { // WE_HAVE_A_SCALE
-                mtx[0] = @as(f32, @floatFromInt(readCursor(i16, bytes, &comp))) / 16384.0;
+                mtx[0] = @as(f32, @floatFromInt(try readCursor(i16, bytes, &comp))) / 16384.0;
                 mtx[1] = 0;
                 mtx[2] = 0;
                 mtx[3] = mtx[0];
             } else if ((flags & (1 << 6)) != 0) { // WE_HAVE_AN_X_AND_YSCALE
-                mtx[0] = @as(f32, @floatFromInt(readCursor(i16, bytes, &comp))) / 16384.0;
+                mtx[0] = @as(f32, @floatFromInt(try readCursor(i16, bytes, &comp))) / 16384.0;
                 mtx[1] = 0;
                 mtx[2] = 0;
-                mtx[3] = @as(f32, @floatFromInt(readCursor(i16, bytes, &comp))) / 16384.0;
+                mtx[3] = @as(f32, @floatFromInt(try readCursor(i16, bytes, &comp))) / 16384.0;
             } else if ((flags & (1 << 7)) != 0) { // WE_HAVE_A_TWO_BY_TWO
-                mtx[0] = @as(f32, @floatFromInt(readCursor(i16, bytes, &comp))) / 16384.0;
-                mtx[1] = @as(f32, @floatFromInt(readCursor(i16, bytes, &comp))) / 16384.0;
-                mtx[2] = @as(f32, @floatFromInt(readCursor(i16, bytes, &comp))) / 16384.0;
-                mtx[3] = @as(f32, @floatFromInt(readCursor(i16, bytes, &comp))) / 16384.0;
+                mtx[0] = @as(f32, @floatFromInt(try readCursor(i16, bytes, &comp))) / 16384.0;
+                mtx[1] = @as(f32, @floatFromInt(try readCursor(i16, bytes, &comp))) / 16384.0;
+                mtx[2] = @as(f32, @floatFromInt(try readCursor(i16, bytes, &comp))) / 16384.0;
+                mtx[3] = @as(f32, @floatFromInt(try readCursor(i16, bytes, &comp))) / 16384.0;
             }
 
             var child_points: ArrayList(OutlinePoint) = .empty;
@@ -697,38 +718,58 @@ fn glyphShapeTTInner(
             for (comp_verts) |*v| {
                 const end = (OutlinePoint{ .x = @floatFromInt(v.x), .y = @floatFromInt(v.y) }).transform(mtx);
                 const control = (OutlinePoint{ .x = @floatFromInt(v.cx), .y = @floatFromInt(v.cy) }).transform(mtx);
-                v.x = @intFromFloat(end.x);
-                v.y = @intFromFloat(end.y);
-                v.cx = @intFromFloat(control.x);
-                v.cy = @intFromFloat(control.y);
+                v.x = try vertexCoordinate(end.x);
+                v.y = try vertexCoordinate(end.y);
+                if (v.type == .vcurve) {
+                    v.cx = try vertexCoordinate(control.x);
+                    v.cy = try vertexCoordinate(control.y);
+                }
             }
             try vertices.appendSlice(gpa, comp_verts);
             for (child_points.items) |point| try parent_points.append(gpa, point.transform(mtx));
             more = (flags & (1 << 5)) != 0;
+        }
+        if (have_instructions) {
+            const length = try readCursor(u16, bytes, &comp);
+            _ = try source.span(comp, length);
         }
         if (outline_points) |out| try out.appendSlice(gpa, parent_points.items);
     }
     return vertices.toOwnedSlice(gpa);
 }
 
-fn glyfOffset(tt: *const TrueType, glyph: GlyphIndex) ?u32 {
-    const bytes = tt.ttf_bytes;
-    const glyph_index: usize = @backingInt(glyph);
+fn tableReader(tt: *const TrueType, id: TableId) Reader.Error!Reader {
+    const i = @backingInt(id);
+    return .{ .bytes = try (Reader{ .bytes = tt.ttf_bytes }).span(tt.table_offsets[i], tt.table_lengths[i]) };
+}
 
-    assert(glyph_index < tt.glyphs_len);
-    assert(tt.index_to_loc_format < 2);
-
-    const glyf = tt.table_offsets[@backingInt(TableId.glyf)];
-    const loca = tt.table_offsets[@backingInt(TableId.loca)];
-    const g1, const g2 = if (tt.index_to_loc_format == 0) .{
-        glyf + @as(u32, readInt(u16, bytes[loca + glyph_index * 2 ..][0..2], .big)) * 2,
-        glyf + @as(u32, readInt(u16, bytes[loca + glyph_index * 2 + 2 ..][0..2], .big)) * 2,
+fn glyphData(tt: *const TrueType, glyph: GlyphIndex) GlyphBitmapError!Reader {
+    const index: usize = @backingInt(glyph);
+    if (index >= tt.glyphs_len) return error.InvalidCompositeGlyph;
+    if (tt.index_to_loc_format > 1) return error.InvalidFontData;
+    const loca = try tt.tableReader(.loca);
+    const glyf = try tt.tableReader(.glyf);
+    const start: u32, const end: u32 = if (tt.index_to_loc_format == 0) .{
+        @as(u32, try loca.read(u16, index * 2)) * 2,
+        @as(u32, try loca.read(u16, index * 2 + 2)) * 2,
     } else .{
-        glyf + readInt(u32, bytes[loca + glyph_index * 4 ..][0..4], .big),
-        glyf + readInt(u32, bytes[loca + glyph_index * 4 + 4 ..][0..4], .big),
+        try loca.read(u32, index * 4),
+        try loca.read(u32, index * 4 + 4),
     };
-    if (g1 == g2) return null;
-    return g1;
+    if (end < start) return error.InvalidFontData;
+    const source: Reader = .{ .bytes = try glyf.span(start, end - start) };
+    if (source.bytes.len != 0) {
+        _ = try source.span(0, 10);
+        if (try source.read(i16, 2) > try source.read(i16, 6) or
+            try source.read(i16, 4) > try source.read(i16, 8)) return error.InvalidFontData;
+    }
+    return source;
+}
+
+fn vertexCoordinate(value: f32) error{CoordinateOutOfRange}!i16 {
+    const rounded = @trunc(value);
+    if (!std.math.isFinite(rounded) or rounded < -32768 or rounded > 32767) return error.CoordinateOutOfRange;
+    return @intFromFloat(rounded);
 }
 
 pub const BitmapBox = @import("glyph.zig").BitmapBox;
@@ -768,8 +809,10 @@ pub fn glyphBox(tt: *const TrueType, glyph: GlyphIndex) ?BitmapBox {
 }
 
 fn glyphBoxTT(tt: *const TrueType, glyph: GlyphIndex) ?BitmapBox {
-    const bytes = tt.ttf_bytes;
-    const g = glyfOffset(tt, glyph) orelse return null;
+    const source = glyphData(tt, glyph) catch return null;
+    if (source.bytes.len == 0) return null;
+    const bytes = source.bytes;
+    const g = 0;
     return .{
         .x0 = readInt(i16, bytes[g + 2 ..][0..2], .big),
         .y0 = readInt(i16, bytes[g + 4 ..][0..2], .big),
@@ -810,9 +853,9 @@ fn closeShape(
     return vertices_len;
 }
 
-fn readCursor(comptime I: type, bytes: []const u8, cursor: *u32) I {
+fn readCursor(comptime I: type, bytes: []const u8, cursor: *u32) Reader.Error!I {
     const start = cursor.*;
-    const result = readInt(I, bytes[start..][0..@sizeOf(I)], .big);
+    const result = try (Reader{ .bytes = bytes }).read(I, start);
     cursor.* = start + @sizeOf(I);
     return result;
 }

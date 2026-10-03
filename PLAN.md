@@ -155,7 +155,7 @@ defines the directory and table ranges used by this work.
   missing required data, and empty optional tables.
 - [x] Validate the relationships between glyph counts, horizontal metric counts,
   metric records, and short/long location entries.
-- [ ] Bound each glyph to its own `loca` interval within `glyf`; validate contour
+- [x] Bound each glyph to its own `loca` interval within `glyf`; validate contour
   endpoints, instructions, flag repeats, coordinate streams, and component data.
 - [ ] Apply the same approach to character maps, variation maps, legacy kerning,
   GPOS lookups, coverage tables, and class definitions.
@@ -551,3 +551,13 @@ and the next unresolved dependency.
   tags, missing metadata, metric counts, and escaping cmap records.
   Validation: 45 font/API tests passed in Debug and ReleaseSafe, plus three
   unchanged cached rasterizer tests (48 tests across both roots).
+
+- Q3 TrueType glyph slice: all outline reads are bounded by the glyph's own
+  `loca` interval. Contour endpoints, flag repeats, instructions, component
+  transforms, and coordinate conversions are checked. One-point off-curve
+  contours no longer read a following point. Truncation fixtures put another
+  valid glyph immediately after the truncated one to verify isolation.
+  Synthetic direct-struct fixtures now supply table lengths; callers should
+  construct fonts with `load`, not fill implementation fields manually.
+  Validation: 48 font/API tests passed in Debug and ReleaseSafe, plus three
+  unchanged cached rasterizer tests (51 tests across both roots).

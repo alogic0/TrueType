@@ -78,6 +78,8 @@ fn font(w: *std.Io.Writer, glyphs: []const []const u8) !TrueType {
     };
     result.table_offsets[@backingInt(TrueType.TableId.loca)] = loca;
     result.table_offsets[@backingInt(TrueType.TableId.glyf)] = @intCast(glyf);
+    result.table_lengths[@backingInt(TrueType.TableId.loca)] = @intCast(4 * (glyphs.len + 1));
+    result.table_lengths[@backingInt(TrueType.TableId.glyf)] = @intCast(w.buffered().len - glyf);
     return result;
 }
 
@@ -190,4 +192,74 @@ test "composite invalid point references and cycles return errors" {
         const tt = try font(&font_w, &.{ base, comp });
         try std.testing.expectError(if (i == 3) error.RecursionLimit else error.InvalidCompositeGlyph, tt.glyphShape(gpa, @fromBackingInt(1)));
     }
+}
+
+test "TrueType glyph reads cannot escape into the following glyph" {
+    var glyph_buf: [128]u8 = undefined;
+    var glyph_w: std.Io.Writer = .fixed(&glyph_buf);
+    const data = try simple(&glyph_w, &.{ .{ .x = 1, .y = 2 }, .{ .x = 10, .y = 20 }, .{ .x = 30, .y = 40 } });
+    for (1..data.len) |length| {
+        var font_buf: [512]u8 = undefined;
+        var font_w: std.Io.Writer = .fixed(&font_buf);
+        const tt = try font(&font_w, &.{ data[0..length], data });
+        const shape = tt.glyphShape(gpa, @fromBackingInt(0)) catch continue;
+        gpa.free(shape);
+        return error.AcceptedTruncatedGlyph;
+    }
+    var comp_buf: [128]u8 = undefined;
+    var comp_w: std.Io.Writer = .fixed(&comp_buf);
+    const comp = try composite(&comp_w, &.{.{ .glyph = 0, .flags = 0x83, .a = 1, .b = 2 }});
+    for (1..comp.len) |length| {
+        var font_buf: [512]u8 = undefined;
+        var font_w: std.Io.Writer = .fixed(&font_buf);
+        const tt = try font(&font_w, &.{ data, comp[0..length], comp });
+        const shape = tt.glyphShape(gpa, @fromBackingInt(1)) catch continue;
+        gpa.free(shape);
+        return error.AcceptedTruncatedComposite;
+    }
+}
+
+test "TrueType single off-curve contours and invalid flag repeats" {
+    var glyph_buf: [64]u8 = undefined;
+    var glyph_w: std.Io.Writer = .fixed(&glyph_buf);
+    const data = try simple(&glyph_w, &.{.{ .x = 50, .y = 60, .on = false }});
+    var font_buf: [128]u8 = undefined;
+    var font_w: std.Io.Writer = .fixed(&font_buf);
+    const tt = try font(&font_w, &.{data});
+    const shape = try tt.glyphShape(gpa, @fromBackingInt(0));
+    defer gpa.free(shape);
+    try expectEqual(2, shape.len);
+    try expectEqual(50, shape[0].x);
+    try expectEqual(60, shape[0].y);
+    const offset = tt.table_offsets[@backingInt(TrueType.TableId.glyf)];
+    font_buf[offset + 14] = 8;
+    font_buf[offset + 15] = 1; // repeats past the only point
+    try std.testing.expectError(error.InvalidFontData, tt.glyphShape(gpa, @fromBackingInt(0)));
+}
+
+test "TrueType validates location intervals coordinate sums and component instructions" {
+    var glyph_buf: [64]u8 = undefined;
+    var glyph_w: std.Io.Writer = .fixed(&glyph_buf);
+    const data = try simple(&glyph_w, &.{ .{ .x = 1, .y = 2 }, .{ .x = 3, .y = 4 } });
+    var font_buf: [256]u8 = undefined;
+    var font_w: std.Io.Writer = .fixed(&font_buf);
+    const tt = try font(&font_w, &.{data});
+    const loca = tt.table_offsets[@backingInt(TrueType.TableId.loca)];
+    const glyf = tt.table_offsets[@backingInt(TrueType.TableId.glyf)];
+    std.mem.writeInt(u32, font_buf[loca + 4 ..][0..4], 0xffffffff, .big);
+    try std.testing.expectError(error.EndOfStream, tt.glyphShape(gpa, @fromBackingInt(0)));
+    std.mem.writeInt(u32, font_buf[loca..][0..4], 1, .big);
+    std.mem.writeInt(u32, font_buf[loca + 4 ..][0..4], 0, .big);
+    try std.testing.expectError(error.InvalidFontData, tt.glyphShape(gpa, @fromBackingInt(0)));
+    std.mem.writeInt(u32, font_buf[loca..][0..4], 0, .big);
+    std.mem.writeInt(u32, font_buf[loca + 4 ..][0..4], @intCast(data.len), .big);
+    std.mem.writeInt(i16, font_buf[glyf + 16 ..][0..2], 32767, .big);
+    try std.testing.expectError(error.CoordinateOutOfRange, tt.glyphShape(gpa, @fromBackingInt(0)));
+
+    var comp_buf: [64]u8 = undefined;
+    var comp_w: std.Io.Writer = .fixed(&comp_buf);
+    const comp = try composite(&comp_w, &.{.{ .glyph = 0, .flags = 0x103, .a = 0, .b = 0 }});
+    font_w = .fixed(&font_buf);
+    const composite_tt = try font(&font_w, &.{ data, comp });
+    try std.testing.expectError(error.EndOfStream, composite_tt.glyphShape(gpa, @fromBackingInt(1)));
 }
