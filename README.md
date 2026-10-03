@@ -47,6 +47,33 @@ Use one workspace per concurrent render; call `workspace.release()` to free its
 cached memory early. The original `glyphBitmap` and `glyphBitmapSubpixel` APIs
 remain available for one-off rendering.
 
+## Fixed-memory rendering
+
+The same API supports a fixed budget by supplying separate
+`std.heap.FixedBufferAllocator` instances for output and workspace scratch.
+There is no fallback heap allocator. Insufficient storage returns `OutOfMemory`;
+existing pixels survive and the workspace remains reusable. See the compiling
+[example](examples/render.zig):
+
+```sh
+zig build examples
+zig build example -- test/StandardSymbolsPS.otf
+```
+
+The example uses 64 KiB output and 256 KiB scratch. These are workload budgets,
+not universal capacity estimates. Loading the file in the example uses the
+process allocator; the render itself uses only the fixed buffers. The font
+parser borrows bytes, so callers can instead supply static font storage too.
+
+Tests compare mixed glyphs at 12/32/96 pixels against one-shot output, check
+stable warm buffer usage, and exercise scratch/output exhaustion and release.
+Output capacity is independent of workspace capacity. `workspace.release()` is
+an explicit retained-memory policy; call it after an unusually large workload or
+when idle. Automatic shrinking and capacity estimation are deferred until a
+caller needs stronger guarantees. Never reset a fixed allocator while its
+workspace or output allocations remain live. Use separate workspaces and output
+lists for concurrent renders; immutable font bytes may be shared.
+
 ## Rendering benchmarks
 
 Run from a checkout with the compiler version in `build.zig.zon`:

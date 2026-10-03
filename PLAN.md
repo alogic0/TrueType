@@ -292,15 +292,15 @@ Replace the broad heap-allocation roadmap item with three distinct guarantees:
 | Reused workspace | No backing-allocator calls for a warmed workload that fits retained capacity |
 | Fixed-budget rendering | Caller-provided output and scratch storage; no fallback heap allocation; defined exhaustion error |
 
-- [ ] Demonstrate fixed-buffer allocators with the existing API before designing
+- [x] Demonstrate fixed-buffer allocators with the existing API before designing
   a new scratch interface. Test both sufficient and insufficient storage.
-- [ ] Document whether zero backing calls include output growth; output reuse must
+- [x] Document whether zero backing calls include output growth; output reuse must
   be stated independently from temporary workspace reuse.
-- [ ] Test mixed glyphs, size changes, large-then-small workloads, release, and
+- [x] Test mixed glyphs, size changes, large-then-small workloads, release, and
   recovery after exhaustion. Use separate workspaces for concurrent callers.
-- [ ] Evaluate a retained-memory cap/release policy based on those measurements.
+- [x] Evaluate a retained-memory cap/release policy based on those measurements.
   Preserve existing defaults unless an API change is justified.
-- [ ] Add scratch-capacity estimation only if callers need a stronger guarantee
+- [x] Add scratch-capacity estimation only if callers need a stronger guarantee
   than a fixed budget and a recoverable exhaustion error.
 
 **Exit evidence:** executable examples and allocation-count/failure tests for all
@@ -637,3 +637,14 @@ and the next unresolved dependency.
   points callers to supported outline and checked-bounds APIs.
   Validation: 20 targeted CFF/API tests plus one rasterizer-root discovery test
   passed in Debug; 2,000 deterministic parser mutations also passed.
+
+- B1 fixed-memory slice: added separate fixed output/scratch tests for mixed
+  glyphs and 12/32/96-pixel sizes, exact one-shot output comparison, stable warm
+  usage, release/reuse, and exhaustion/recovery. `examples/render.zig` compiles
+  and renders using 64 KiB output and 256 KiB scratch, including checked metrics
+  and variation fallback. Existing zero-backing-call tests remain independent
+  from output growth. Keep explicit `release()` as the retention policy; no
+  evidence currently justifies automatic shrinking or a capacity estimator.
+  Validation: six focused fixed-buffer/CFF tests plus the rasterizer discovery
+  test passed in Debug and ReleaseSafe; the example compiled in both modes and
+  ran against the bundled CFF font.

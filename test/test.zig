@@ -497,6 +497,7 @@ test {
     _ = @import("type2.zig");
     _ = @import("sfnt.zig");
     _ = @import("contracts.zig");
+    _ = @import("fixed_buffer.zig");
 }
 
 test "GPOS checked lookup bounds every accessed record and extension" {

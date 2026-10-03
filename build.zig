@@ -85,6 +85,20 @@ pub fn build(b: *std.Build) void {
     run_replay.addPassthruArgs();
     b.step("fuzz-replay", "Replay a raw font or deterministic mutations").dependOn(&run_replay.step);
 
+    const example = b.addExecutable(.{
+        .name = "truetype-render",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/render.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    example.root_module.addImport("TrueType", tt_mod);
+    b.step("examples", "Compile the fixed-budget rendering example").dependOn(&example.step);
+    const run_example = b.addRunArtifact(example);
+    run_example.addPassthruArgs();
+    b.step("example", "Render a glyph: zig build example -- path/to/font.ttf").dependOn(&run_example.step);
+
     const benchmark = b.addExecutable(.{
         .name = "truetype-benchmark",
         .root_module = b.createModule(.{
