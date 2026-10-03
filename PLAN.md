@@ -179,19 +179,19 @@ Suggested commits:
 
 ### Q4 — Add reproducible parser fuzzing [M]
 
-- [ ] Add separate targets for loading, glyph lookup/metrics, outline decoding,
+- [x] Add separate targets for loading, glyph lookup/metrics, outline decoding,
   and bounded bitmap rendering. Start the loader target after directory checks;
   extend targets as Q2 and Q3 land.
-- [ ] Use the pinned compiler's supported fuzzing interface after inspecting its
+- [x] Use the pinned compiler's supported fuzzing interface after inspecting its
   local implementation. Add replay of individual inputs and deterministic seeded
   mutation tests for fast CI coverage.
-- [ ] Seed with small synthetic fonts and the bundled fixtures where licenses
+- [x] Seed with small synthetic fonts and the bundled fixtures where licenses
   permit. Mutate lengths, counts, offsets, flags, instruction bytes, and recursion.
-- [ ] Limit input size, interpreter work, decoded geometry, bitmap dimensions,
+- [x] Limit input size, interpreter work, decoded geometry, bitmap dimensions,
   and allocation budget in the harness. Enforce production limits separately.
-- [ ] Run a bounded campaign, minimize failures, and check in regression cases
+- [x] Run a bounded campaign, minimize failures, and check in regression cases
   with the fixing commit. Record duration, configuration, corpus, and open issues.
-- [ ] Exclude the C reference parser from malformed-input fuzz targets; it is
+- [x] Exclude the C reference parser from malformed-input fuzz targets; it is
   useful for comparing supported valid fonts, not as a safety oracle.
 
 **Done when:** failures can be replayed with a documented command, a clean
@@ -494,7 +494,7 @@ behavior and failures; a larger number alone is not evidence of broader coverage
 7. Select D, E, or a later extension based on the next concrete rendering or
    typography requirement. Keep those releases independently usable.
 
-**Next implementation slice:** Q4, bounded fuzz targets and deterministic replay.
+**Next implementation slice:** A3, extract bounded TrueType outline decoding.
 Q1–Q3 and A1–A2 are implemented; broader corpus and release review remain pending.
 
 For every completed slice, append a short record here or link its commit with:
@@ -610,3 +610,13 @@ and the next unresolved dependency.
   Validation: all 63 tests passed in Debug and ReleaseSafe (59 font/API and four
   rasterizer tests), including the existing allocation-failure and valid-font
   differential suites.
+
+- Q4 initial fuzz slice: added four bounded Smith targets, a small authored
+  TrueType seed, the existing CFF seed, deterministic byte/word/flag/truncation
+  mutations, and raw/Smith/index replay. The harness uses strict production
+  limits and a 2 MiB fixed allocator; it never calls the C reference parser.
+  Five corpus/seed checks passed in Debug and ReleaseSafe, 100,000 deterministic
+  mutations passed, and all four explicitly exercised native targets passed.
+  See `fuzz/CAMPAIGN.md` for measured durations, compiler/cache caveats, and
+  remaining corpus limitations. Core code was unchanged after the 63-test
+  Debug/ReleaseSafe resource-limit validation.

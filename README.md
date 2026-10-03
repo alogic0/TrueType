@@ -163,11 +163,18 @@ they cannot expand the public integer coordinate/dimension representations.
 Load validates only the selected base/variation cmap, and caps nested format-14
 mapping validation at 1,000,000 records to bound shared-map amplification.
 
+## Fuzzing
+
+Run `zig build fuzz fuzz-replay` for seed checks and a short deterministic
+mutation campaign. See [fuzz/README.md](fuzz/README.md) for separate native targets,
+input/work limits, and reproducing individual failures.
+
 ## Roadmap
 
 See [PLAN.md](PLAN.md) for the implementation sequence, commit-sized slices,
-validation criteria, and release gates. The immediate priorities are CFF numeric
-correctness, missing Type 2 operators, bounded font reads, and reproducible fuzzing.
+validation criteria, and release gates. CFF numeric/operator fixes, bounded reads, checked queries,
+resource budgets, and initial fuzz targets are implemented. The next work covers
+module boundaries, broader fixtures, and release evidence.
 The broader plan covers predictable memory use, a stable core release, hinting,
 and text shaping.
 

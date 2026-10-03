@@ -63,6 +63,32 @@ pub fn build(b: *std.Build) void {
     rasterizer_tests.filters = unit_tests.filters;
     test_step.dependOn(&b.addRunArtifact(rasterizer_tests).step);
 
+    const fuzz_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("fuzz_tests.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+        .use_llvm = use_llvm,
+        .use_lld = use_llvm,
+    });
+    fuzz_tests.filters = unit_tests.filters;
+    fuzz_tests.root_module.addImport("TrueType", tt_mod);
+    b.step("fuzz", "Run bounded parser fuzz seeds (add --fuzz=10K -Duse-llvm=true)").dependOn(&b.addRunArtifact(fuzz_tests).step);
+    const replay = b.addExecutable(.{
+        .name = "truetype-fuzz-replay",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("fuzz_replay.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    replay.root_module.addImport("TrueType", tt_mod);
+    const run_replay = b.addRunArtifact(replay);
+    run_replay.has_side_effects = true;
+    run_replay.addPassthruArgs();
+    b.step("fuzz-replay", "Replay a raw font or deterministic mutations").dependOn(&run_replay.step);
+
     const benchmark = b.addExecutable(.{
         .name = "truetype-benchmark",
         .root_module = b.createModule(.{
