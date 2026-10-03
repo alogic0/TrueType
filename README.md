@@ -101,9 +101,11 @@ scales need separate measurements.
 
 ## Roadmap
 
-* eliminate TODOs
-* eliminate heap allocation
-* support more advanced text shaping like harfbuzz
+See [PLAN.md](PLAN.md) for the implementation sequence, commit-sized slices,
+validation criteria, and release gates. The immediate priorities are CFF numeric
+correctness, missing Type 2 operators, bounded font reads, and reproducible fuzzing.
+The broader plan covers predictable memory use, a stable core release, hinting,
+and text shaping.
 
 ## Why not use FreeType?
 
