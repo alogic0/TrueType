@@ -696,3 +696,13 @@ and the next unresolved dependency.
   tests passed in Debug and ReleaseSafe, including numeric, bitmap-reference,
   allocation-failure, and workspace tests. Recorded before/after CSVs and method
   are in `benchmarks/WORKLOADS.md`.
+
+- A1/A2 follow-up regression: a new extreme finite anisotropy test reproduced a
+  clipping assertion with a valid CFF glyph at scales 0.05 and 1e-40. Added checked
+  edge slope/reciprocal/extrapolation and clipping/coverage numeric conditions;
+  unresolved f32 geometry now returns `CoordinateOutOfRange` instead of trapping.
+  The regression spans six tiny scales in both axes and verifies preserved pixel
+  prefixes and workspace reuse. The fuzz bitmap target now includes anisotropy.
+  Validation: all 70 tests passed in Debug and ReleaseSafe; the new numeric
+  regression also passed in ReleaseFast. Short deterministic mutation checks
+  passed with the expanded harness. Longer campaign evidence follows separately.

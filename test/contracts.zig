@@ -100,3 +100,24 @@ test "CFF budgets cover repeated shallow calls and both interpretation passes" {
     defer std.testing.allocator.free(shape);
     try std.testing.expectEqual(@as(usize, 0), shape.len);
 }
+
+test "extreme finite anisotropic scales have a defined numeric outcome" {
+    const font = try TrueType.load(original);
+    var pixels: std.ArrayList(u8) = .empty;
+    defer pixels.deinit(std.testing.allocator);
+    try pixels.appendSlice(std.testing.allocator, &.{ 7, 9 });
+    var workspace: TrueType.RasterizerWorkspace = .init(std.testing.allocator);
+    defer workspace.deinit();
+    var failures: usize = 0;
+    for ([_]f32{ 1e-40, 1e-30, 1e-20, 1e-12, 1e-8, 1e-5 }) |tiny| {
+        for ([_][2]f32{ .{ 0.05, tiny }, .{ tiny, 0.05 } }) |scale| {
+            pixels.shrinkRetainingCapacity(2);
+            _ = font.glyphBitmapWithWorkspace(std.testing.allocator, &pixels, &workspace, font.codepointGlyphIndex('A'), scale[0], scale[1]) catch |err| {
+                try std.testing.expectEqual(error.CoordinateOutOfRange, err);
+                try std.testing.expectEqualSlices(u8, &.{ 7, 9 }, pixels.items);
+                failures += 1;
+            };
+        }
+    }
+    try std.testing.expect(failures >= 2);
+}

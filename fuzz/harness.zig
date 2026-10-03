@@ -44,5 +44,9 @@ pub fn exercise(bytes: []const u8, stage: Stage) void {
         defer pixels.deinit(allocator);
         const scale = font.scaleForPixelHeight(24);
         _ = font.glyphBitmapSubpixel(allocator, &pixels, glyph, scale, scale * 0.75, 0.25, -0.125) catch {};
+        for ([_][2]f32{ .{ scale, 1e-30 }, .{ 1e-30, scale } }) |axes| {
+            pixels.clearRetainingCapacity();
+            _ = font.glyphBitmap(allocator, &pixels, glyph, axes[0], axes[1]) catch {};
+        }
     }
 }

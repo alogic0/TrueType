@@ -3,7 +3,7 @@
 const Limits = @import("limits.zig");
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const assert = std.debug.assert;
+pub const Error = Allocator.Error || Limits.Error || error{CoordinateOutOfRange};
 const ArrayList = std.ArrayListUnmanaged;
 const Vertex = @import("glyph.zig").Vertex;
 
@@ -58,7 +58,7 @@ pub fn rasterize(
     off_x: i32,
     off_y: i32,
     invert: bool,
-) (Allocator.Error || Limits.Error)!void {
+) Error!void {
     return rasterizeWithLimits(.{}, gpa, result, flatness_in_pixels, vertices, scale_x, scale_y, shift_x, shift_y, off_x, off_y, invert);
 }
 
@@ -75,7 +75,7 @@ pub fn rasterizeWithLimits(
     off_x: i32,
     off_y: i32,
     invert: bool,
-) (Allocator.Error || Limits.Error)!void {
+) Error!void {
     // Bound error in both pixel axes, including unequal and reflected scales.
     // Dividing by the smaller scale would allow visible error on the larger axis.
     const scale = @max(@abs(scale_x), @abs(scale_y));
@@ -114,7 +114,7 @@ fn rasterizeInner(
     off_y: i32,
     invert: bool,
     observer: anytype,
-) Allocator.Error!void {
+) Error!void {
     const y_scale_inv: f32 = if (invert) -scale_y else scale_y;
 
     // now we have to blow out the windings into explicit edge lists
@@ -192,7 +192,7 @@ fn flattenCurves(
     vertices: []const Vertex,
     objspace_flatness: f32,
     max_points: u32,
-) (Allocator.Error || Limits.Error)!FlattenedCurves {
+) Error!FlattenedCurves {
     var remaining = @min(max_points, std.math.maxInt(u32) - 1);
     var points: ArrayList(Point) = .empty;
     defer points.deinit(gpa);
@@ -268,7 +268,7 @@ fn flattenCurves(
     };
 }
 
-fn appendPoint(gpa: Allocator, points: *ArrayList(Point), remaining: *u32, point: Point) (Allocator.Error || Limits.Error)!void {
+fn appendPoint(gpa: Allocator, points: *ArrayList(Point), remaining: *u32, point: Point) Error!void {
     try Limits.consume(remaining, 1);
     try points.append(gpa, point);
 }
@@ -286,7 +286,7 @@ fn tesselateCurve(
     y2: f32,
     objspace_flatness_squared: f32,
     n: u32,
-) (Allocator.Error || Limits.Error)!void {
+) Error!void {
     // midpoint
     const mx: f32 = (x0 + 2 * x1 + x2) / 4;
     const my: f32 = (y0 + 2 * y1 + y2) / 4;
@@ -316,7 +316,7 @@ fn tesselateCubic(
     y3: f32,
     objspace_flatness_squared: f32,
     n: u32,
-) (Allocator.Error || Limits.Error)!void {
+) Error!void {
     // According to Dougall Johnson, this "flatness" calculation is just
     // made-up nonsense that seems to work well enough.
     const dx0 = x1 - x0;
@@ -356,13 +356,17 @@ fn tesselateCubic(
     }
 }
 
-fn sizedTrapezoidArea(height: f32, top_width: f32, bottom_width: f32) f32 {
-    assert(top_width >= 0);
-    assert(bottom_width >= 0);
+fn require(condition: bool) error{CoordinateOutOfRange}!void {
+    if (!condition) return error.CoordinateOutOfRange;
+}
+
+fn sizedTrapezoidArea(height: f32, top_width: f32, bottom_width: f32) error{CoordinateOutOfRange}!f32 {
+    try require(top_width >= 0);
+    try require(bottom_width >= 0);
     return (top_width + bottom_width) / 2.0 * height;
 }
 
-fn positionTrapezoidArea(height: f32, tx0: f32, tx1: f32, bx0: f32, bx1: f32) f32 {
+fn positionTrapezoidArea(height: f32, tx0: f32, tx1: f32, bx0: f32, bx1: f32) error{CoordinateOutOfRange}!f32 {
     return sizedTrapezoidArea(height, tx1 - tx0, bx1 - bx0);
 }
 
@@ -387,7 +391,7 @@ fn rasterizeSortedEdges(
     edges: []Edge,
     off_x: i32,
     off_y: i32,
-) Allocator.Error!void {
+) Error!void {
     var arena_allocator = std.heap.ArenaAllocator.init(gpa);
     defer arena_allocator.deinit();
     const arena = arena_allocator.allocator();
@@ -417,7 +421,7 @@ fn rasterizeSortedEdges(
         while (step.*) |z| {
             if (z.ey <= scan_y_top) {
                 step.* = z.next; // delete from list
-                assert(z.direction != 0);
+                try require(z.direction != 0);
                 z.direction = 0;
                 arena.destroy(z);
             } else {
@@ -434,7 +438,7 @@ fn rasterizeSortedEdges(
                 }
                 // If we get really unlucky a tiny bit of an edge can be
                 // out of bounds.
-                assert(z.ey >= scan_y_top);
+                try require(z.ey >= scan_y_top);
 
                 // Insert at front.
                 z.next = active;
@@ -443,12 +447,13 @@ fn rasterizeSortedEdges(
             e += 1;
         }
 
-        if (active) |a| fillActiveEdges(scanline, scanline2, result.w, a, scan_y_top);
+        if (active) |a| try fillActiveEdges(scanline, scanline2, result.w, a, scan_y_top);
 
         {
             var sum: f32 = 0;
             for (scanline, scanline2[0..result.w], result.pixels[j * result.stride ..][0..result.w]) |s, s2, *p| {
                 sum += s2;
+                try require(std.math.isFinite(s + sum));
                 p.* = @intFromFloat(@min(@abs(s + sum) * 255 + 0.5, 255));
             }
         }
@@ -464,13 +469,19 @@ fn rasterizeSortedEdges(
     }
 }
 
-fn newActive(arena: Allocator, e: Edge, off_x: i32, start_point: f32) Allocator.Error!*ActiveEdge {
-    const z = try arena.create(ActiveEdge);
+fn newActive(arena: Allocator, e: Edge, off_x: i32, start_point: f32) Error!*ActiveEdge {
     const dxdy: f32 = (e.x1 - e.x0) / (e.y1 - e.y0);
+    const inverse = if (dxdy != 0) 1 / dxdy else 0;
+    const fx = (e.x0 + dxdy * (start_point - e.y0)) - @as(f32, @floatFromInt(off_x));
+    // Beyond this slope, one ULP of scanline extrapolation can exceed a pixel.
+    // Clipping back to a tiny segment then loses its endpoint by cancellation.
+    if (!std.math.isFinite(dxdy) or !std.math.isFinite(inverse) or !std.math.isFinite(fx) or
+        @abs(dxdy) > 1 / std.math.floatEps(f32)) return error.CoordinateOutOfRange;
+    const z = try arena.create(ActiveEdge);
     z.* = .{
         .fdx = dxdy,
-        .fdy = if (dxdy != 0.0) (1.0 / dxdy) else 0.0,
-        .fx = (e.x0 + dxdy * (start_point - e.y0)) - @as(f32, @floatFromInt(off_x)),
+        .fdy = inverse,
+        .fx = fx,
         .direction = if (e.invert) 1.0 else -1.0,
         .sy = e.y0,
         .ey = e.y1,
@@ -479,23 +490,23 @@ fn newActive(arena: Allocator, e: Edge, off_x: i32, start_point: f32) Allocator.
     return z;
 }
 
-fn fillActiveEdges(scanline: []f32, scanline_fill: []f32, len: u32, start_edge: *ActiveEdge, y_top: f32) void {
+fn fillActiveEdges(scanline: []f32, scanline_fill: []f32, len: u32, start_edge: *ActiveEdge, y_top: f32) error{CoordinateOutOfRange}!void {
     const y_bottom: f32 = y_top + 1;
     var opt_e: ?*ActiveEdge = start_edge;
     while (opt_e) |e| : (opt_e = e.next) {
         // brute force every pixel
 
         // compute intersection points with top & bottom
-        assert(e.ey >= y_top);
+        try require(e.ey >= y_top);
 
         if (e.fdx == 0) {
             const x0 = e.fx;
             if (x0 < @as(f32, @floatFromInt(len))) {
                 if (x0 >= 0) {
-                    handleClippedEdge(scanline, @intFromFloat(x0), e, x0, y_top, x0, y_bottom);
-                    handleClippedEdge(scanline_fill, @as(u32, @intFromFloat(x0)) + 1, e, x0, y_top, x0, y_bottom);
+                    try handleClippedEdge(scanline, @intFromFloat(x0), e, x0, y_top, x0, y_bottom);
+                    try handleClippedEdge(scanline_fill, @as(u32, @intFromFloat(x0)) + 1, e, x0, y_top, x0, y_bottom);
                 } else {
-                    handleClippedEdge(scanline_fill, 0, e, x0, y_top, x0, y_bottom);
+                    try handleClippedEdge(scanline_fill, 0, e, x0, y_top, x0, y_bottom);
                 }
             }
         } else {
@@ -503,8 +514,8 @@ fn fillActiveEdges(scanline: []f32, scanline_fill: []f32, len: u32, start_edge: 
             var dx: f32 = e.fdx;
             var xb: f32 = x0 + dx;
             var dy: f32 = e.fdy;
-            assert(e.sy <= y_bottom);
-            assert(e.ey >= y_top);
+            try require(e.sy <= y_bottom);
+            try require(e.ey >= y_top);
 
             // Compute endpoints of line segment clipped to this scanline (if the
             // line segment starts on this scanline. x0 is the intersection of the
@@ -534,8 +545,8 @@ fn fillActiveEdges(scanline: []f32, scanline_fill: []f32, len: u32, start_edge: 
                     // simple case, only spans one pixel
                     const x: u32 = @intFromFloat(x_top);
                     const height: f32 = (sy1 - sy0) * e.direction;
-                    assert(x < len);
-                    scanline[x] += positionTrapezoidArea(height, x_top, @floatFromInt(x + 1), x_bottom, @floatFromInt(x + 1));
+                    try require(x < len);
+                    scanline[x] += try positionTrapezoidArea(height, x_top, @floatFromInt(x + 1), x_bottom, @floatFromInt(x + 1));
                     scanline_fill[x + 1] += height; // everything right of this pixel is filled
                 } else {
                     // covers 2+ pixels
@@ -549,8 +560,8 @@ fn fillActiveEdges(scanline: []f32, scanline_fill: []f32, len: u32, start_edge: 
                         dy = -dy;
                         std.mem.swap(f32, &x0, &xb);
                     }
-                    assert(dy >= 0);
-                    assert(dx >= 0);
+                    try require(dy >= 0);
+                    try require(dx >= 0);
 
                     const x1: u32 = @intFromFloat(x_top);
                     const x2: u32 = @intFromFloat(x_bottom);
@@ -618,12 +629,12 @@ fn fillActiveEdges(scanline: []f32, scanline_fill: []f32, len: u32, start_edge: 
                         s.* += area + step / 2; // area of trapezoid is 1*step/2
                         area += step;
                     }
-                    assert(@abs(area) <= 1.01); // accumulated error from area += step unless we round step down
-                    assert(sy1 > y_final - 0.01);
+                    try require(@abs(area) <= 1.01); // accumulated error from area += step unless we round step down
+                    try require(sy1 > y_final - 0.01);
 
                     // area covered in the last pixel is the rectangle from all the pixels to the left,
                     // plus the trapezoid filled by the line segment in this pixel all the way to the right edge
-                    scanline[x2] += area + sign * positionTrapezoidArea(sy1 - y_final, x2f, x2f + 1.0, x_bottom, x2f + 1.0);
+                    scanline[x2] += area + sign * try positionTrapezoidArea(sy1 - y_final, x2f, x2f + 1.0, x_bottom, x2f + 1.0);
 
                     // the rest of the line is filled based on the total height of the line segment in this pixel
                     scanline_fill[x2 + 1] += sign * (sy1 - sy0);
@@ -665,27 +676,27 @@ fn fillActiveEdges(scanline: []f32, scanline_fill: []f32, len: u32, start_edge: 
                     const y2: f32 = (x1 + 1 - x0) / dx + y_top;
 
                     if (x0 < x1 and x3 > x2) { // three segments descending down-right
-                        handleClippedEdge(scanline, x, e, x0, y0, x1, y1);
-                        handleClippedEdge(scanline, x, e, x1, y1, x2, y2);
-                        handleClippedEdge(scanline, x, e, x2, y2, x3, y3);
+                        try handleClippedEdge(scanline, x, e, x0, y0, x1, y1);
+                        try handleClippedEdge(scanline, x, e, x1, y1, x2, y2);
+                        try handleClippedEdge(scanline, x, e, x2, y2, x3, y3);
                     } else if (x3 < x1 and x0 > x2) { // three segments descending down-left
-                        handleClippedEdge(scanline, x, e, x0, y0, x2, y2);
-                        handleClippedEdge(scanline, x, e, x2, y2, x1, y1);
-                        handleClippedEdge(scanline, x, e, x1, y1, x3, y3);
+                        try handleClippedEdge(scanline, x, e, x0, y0, x2, y2);
+                        try handleClippedEdge(scanline, x, e, x2, y2, x1, y1);
+                        try handleClippedEdge(scanline, x, e, x1, y1, x3, y3);
                     } else if (x0 < x1 and x3 > x1) { // two segments across x, down-right
-                        handleClippedEdge(scanline, x, e, x0, y0, x1, y1);
-                        handleClippedEdge(scanline, x, e, x1, y1, x3, y3);
+                        try handleClippedEdge(scanline, x, e, x0, y0, x1, y1);
+                        try handleClippedEdge(scanline, x, e, x1, y1, x3, y3);
                     } else if (x3 < x1 and x0 > x1) { // two segments across x, down-left
-                        handleClippedEdge(scanline, x, e, x0, y0, x1, y1);
-                        handleClippedEdge(scanline, x, e, x1, y1, x3, y3);
+                        try handleClippedEdge(scanline, x, e, x0, y0, x1, y1);
+                        try handleClippedEdge(scanline, x, e, x1, y1, x3, y3);
                     } else if (x0 < x2 and x3 > x2) { // two segments across x+1, down-right
-                        handleClippedEdge(scanline, x, e, x0, y0, x2, y2);
-                        handleClippedEdge(scanline, x, e, x2, y2, x3, y3);
+                        try handleClippedEdge(scanline, x, e, x0, y0, x2, y2);
+                        try handleClippedEdge(scanline, x, e, x2, y2, x3, y3);
                     } else if (x3 < x2 and x0 > x2) { // two segments across x+1, down-left
-                        handleClippedEdge(scanline, x, e, x0, y0, x2, y2);
-                        handleClippedEdge(scanline, x, e, x2, y2, x3, y3);
+                        try handleClippedEdge(scanline, x, e, x0, y0, x2, y2);
+                        try handleClippedEdge(scanline, x, e, x2, y2, x3, y3);
                     } else { // one segment
-                        handleClippedEdge(scanline, x, e, x0, y0, x3, y3);
+                        try handleClippedEdge(scanline, x, e, x0, y0, x3, y3);
                     }
                 }
             }
@@ -703,14 +714,14 @@ fn handleClippedEdge(
     y0_start: f32,
     x1_start: f32,
     y1_start: f32,
-) void {
+) error{CoordinateOutOfRange}!void {
     var x0 = x0_start;
     var y0 = y0_start;
     var x1 = x1_start;
     var y1 = y1_start;
     if (y0 == y1) return;
-    assert(y0 < y1);
-    assert(e.sy <= e.ey);
+    try require(y0 < y1);
+    try require(e.sy <= e.ey);
     if (y0 > e.ey) return;
     if (y1 < e.sy) return;
     if (y0 < e.sy) {
@@ -725,16 +736,16 @@ fn handleClippedEdge(
     const xf: f32 = @floatFromInt(x);
 
     if (x0 == xf)
-        assert(x1 <= xf + 1)
+        try require(x1 <= xf + 1)
     else if (x0 == xf + 1)
-        assert(x1 >= xf)
+        try require(x1 >= xf)
     else if (x0 <= xf)
-        assert(x1 <= xf)
+        try require(x1 <= xf)
     else if (x0 >= xf + 1)
-        assert(x1 >= xf + 1)
+        try require(x1 >= xf + 1)
     else {
-        assert(x1 >= xf);
-        assert(x1 <= xf + 1);
+        try require(x1 >= xf);
+        try require(x1 <= xf + 1);
     }
 
     if (x0 <= xf and x1 <= xf) {
@@ -742,10 +753,10 @@ fn handleClippedEdge(
     } else if (x0 >= xf + 1 and x1 >= xf + 1) {
         // Do nothing.
     } else {
-        assert(x0 >= xf);
-        assert(x0 <= xf + 1);
-        assert(x1 >= xf);
-        assert(x1 <= xf + 1);
+        try require(x0 >= xf);
+        try require(x0 <= xf + 1);
+        try require(x1 >= xf);
+        try require(x1 <= xf + 1);
         // coverage = 1 - average x position
         scanline[x] += e.direction * (y1 - y0) * (1 - ((x0 - xf) + (x1 - xf)) / 2);
     }

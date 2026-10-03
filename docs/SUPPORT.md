@@ -31,3 +31,9 @@ fonts. See [font provenance](../test/FONTS.md) and [reference scope](VALIDATION.
 A second engine has not been added: no unresolved rendering discrepancy currently
 requires it. Broader external corpora and isolated long fuzz campaigns remain
 useful release evidence; they must retain provenance and matching render settings.
+
+Extremely anisotropic geometry can exceed the precision of f32 scan conversion
+although both scales are finite and positive. Non-finite edge slopes/reciprocals
+or extrapolated positions, slopes above 2^23 horizontal pixels per vertical
+pixel, and unresolved clipping/coverage arithmetic return `CoordinateOutOfRange`.
+Numeric failure preserves existing output and leaves the workspace reusable.
