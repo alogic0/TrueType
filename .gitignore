@@ -1,3 +1,16 @@
 /.zig-cache/
 /zig-out/
 /.toolchain/
+
+# Local benchmark output
+/benchmarks/local-results.csv
+
+# Operating system files
+.DS_Store
+Thumbs.db
+
+# Editor configurations and swap files
+*.swp
+*~
+.idea/
+.vscode/

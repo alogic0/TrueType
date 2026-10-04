@@ -1,0 +1,71 @@
+name: Bug Report
+description: Create a report to help reproduce and fix a bug
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report an issue!
+  - type: input
+    id: zig-version
+    attributes:
+      label: Zig Version
+      description: What version of Zig are you using (`zig version`)?
+      placeholder: e.g. 0.17.0-dev.2281+83624acf6
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating System & Architecture
+      description: e.g. Linux x86_64, macOS aarch64, Windows x86_64
+      placeholder: e.g. Ubuntu 24.04 x86_64
+    validations:
+      required: true
+  - type: dropdown
+    id: font-format
+    attributes:
+      label: Font Format
+      description: What font container and outline format is involved?
+      options:
+        - TrueType (.ttf)
+        - OpenType CFF (.otf)
+        - Other / Unsure
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: A clear and concise description of the bug.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction Code / Steps
+      description: Provide a minimal code sample reproducing the issue.
+      render: zig
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What did you expect to happen?
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behavior
+      description: What happened instead? (Include error messages, panics, or stack traces)
+    validations:
+      required: true
+  - type: textarea
+    id: font-details
+    attributes:
+      label: Font Information / Sample
+      description: Name of font, source, or attach a minimal reproducing font if permitted by its license.
+    validations:
+      required: false

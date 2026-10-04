@@ -1,0 +1,29 @@
+name: Feature Request
+description: Suggest an idea or enhancement for this project
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please consult [docs/SUPPORT.md](docs/SUPPORT.md) and [PLAN.md](PLAN.md) before submitting to see current roadmap status and non-goals.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem Description / Motivation
+      description: Is your feature request related to a problem or limitation? Please describe.
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution
+      description: Describe the solution or API you'd like to see.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Describe any alternative solutions or workarounds you've considered.
+    validations:
+      required: false

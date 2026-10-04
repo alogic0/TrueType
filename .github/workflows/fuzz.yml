@@ -1,0 +1,36 @@
+name: Extended Fuzz
+
+on:
+  schedule:
+    # Run weekly on Sunday at 00:00 UTC
+    - cron: '0 0 * * 0'
+  workflow_dispatch:
+
+jobs:
+  fuzz:
+    name: Extended Fuzz Campaign
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ca-certificates curl xz-utils python3
+
+      - name: Cache Zig toolchain
+        id: cache-zig
+        uses: actions/cache@v4
+        with:
+          path: .toolchain
+          key: zig-${{ runner.os }}-${{ hashFiles('.zigversion', 'scripts/install-zig.sh') }}
+
+      - name: Install pinned Zig toolchain
+        if: steps.cache-zig.outputs.cache-hit != 'true'
+        run: sh scripts/install-zig.sh
+
+      - name: Run extended fuzz campaign
+        run: |
+          version=$(cat .zigversion)
+          ZIG="$GITHUB_WORKSPACE/.toolchain/zig-x86_64-linux-$version/zig" sh scripts/fuzz-long.sh

@@ -21,12 +21,14 @@ and mutation checks, example builds, and an isolated consumer assembled solely
 from the manifest. It cross-compiles examples for aarch64 Linux, x86_64 Windows,
 and aarch64 macOS. Cross-compilation does not establish runtime correctness.
 
-The repository's remote is Codeberg. `.woodpecker.yml` runs the check script on
-push/PR/manual/cron events, and extended fuzzing on manual/cron events. It uses
-[Woodpecker's event filters](https://woodpecker-ci.org/docs/usage/workflow-syntax).
-Hosted activation and a cron schedule must be configured in the repository's
-CI service; committing this file does not activate a runner. See
-[Codeberg's CI documentation](https://docs.codeberg.org/ci/).
+CI configurations are provided for GitHub Actions and Codeberg / Woodpecker:
+- GitHub Actions workflows in `.github/workflows/ci.yml` and `.github/workflows/fuzz.yml`
+  run the check script on push/PR/manual events and extended fuzzing on schedule/manual triggers.
+- `.woodpecker.yml` runs the check script on push/PR/manual/cron events and extended fuzzing
+  on manual/cron events using [Woodpecker's event filters](https://woodpecker-ci.org/docs/usage/workflow-syntax).
+
+Hosted activation and schedule configuration depend on the hosting service; committing
+these files does not automatically claim a remote pipeline result.
 No remote pipeline or non-Linux runtime result is claimed by this checkout.
 
 Benchmark output remains an explicit artifact (`zig build bench
