@@ -445,7 +445,7 @@ other milestones.
 
 ## 11. Validation commands and evidence
 
-Use the exact currently tested compiler, `0.17.0-dev.2281+83624acf6`, until a
+Use the exact currently tested compiler, `0.17.0`, until a
 separate toolchain-update slice changes it. The commands below assume `zig`
 resolves to that compiler; the system default in the current development
 environment was previously too old.

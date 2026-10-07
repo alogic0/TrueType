@@ -1,6 +1,6 @@
 # Parser fuzzing and replay
 
-Use Zig `0.17.0-dev.2281+83624acf6`. These targets do not compile or call stb.
+Use Zig `0.17.0`. These targets do not compile or call stb.
 
 ```sh
 zig build fuzz                         # corpus smoke tests, plus triangle check
