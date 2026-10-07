@@ -9,7 +9,8 @@ case "$(uname -s)/$(uname -m)" in
 esac
 archive="zig-x86_64-linux-$version.tar.xz"
 mkdir -p .toolchain
+curl --fail --location --retry 3 "https://ziglang.org/download/$version/$archive" -o ".toolchain/$archive" 2>/dev/null || \
 curl --fail --location --retry 3 "https://ziglang.org/builds/$archive" -o ".toolchain/$archive"
-printf '%s  %s\n' '9268a41aa95338b37f9e80694d458ddbbd3d975687c1b2b2d4082612a7cc1e30' ".toolchain/$archive" | sha256sum -c -
+printf '%s  %s\n' '1cbe9df9f27e6b78d14ccbca43b6703a404ef79ef1c463de901d7f088d4e2026' ".toolchain/$archive" | sha256sum -c -
 tar -xJf ".toolchain/$archive" -C .toolchain
 ".toolchain/zig-x86_64-linux-$version/zig" version
